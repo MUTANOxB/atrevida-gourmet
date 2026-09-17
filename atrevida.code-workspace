@@ -1,0 +1,9 @@
+{
+  "folders": [
+    { "path": "." },
+    { "path": "backend" }
+  ],
+  "settings": {
+    "liveServer.settings.root": "/"
+  }
+}

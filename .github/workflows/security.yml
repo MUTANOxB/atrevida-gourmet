@@ -1,0 +1,56 @@
+name: Security
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Frontend build and leak scan
+        run: |
+          npm run test:frontend
+          npm run test:scanner
+          npm run build
+          npm run scan:build
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+      - name: Basic secret-pattern check
+        shell: bash
+        run: |
+          set -e
+          if git grep -n -E '(SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY)[[:space:]]*=[[:space:]]*[^A-Z_<]' -- ':!*.example'; then
+            echo "Possible Supabase server secret committed."
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v -E '\.example$'; then
+            echo "Environment file committed."
+            exit 1
+          fi

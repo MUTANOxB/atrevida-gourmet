@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR" data-store-slug="atrevida-gourmet">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#4A2B24" />
+  <meta name="description" content="Cardápio digital da Atrevida Gourmet." />
+  <title>Atrevida Gourmet | Cardápio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#cardapio">Ir para o cardápio</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#topo" aria-label="Atrevida Gourmet — início">
+        <img class="brand__logo" id="storeLogo" src="assets/img/logo-placeholder.svg" alt="" />
+        <div class="brand__text">
+          <strong id="storeName">Atrevida Gourmet</strong>
+          <span id="storeDescription">Doces &amp; salgados irresistíveis</span>
+        </div>
+      </a>
+      <div class="topbar__actions">
+        <button class="icon-btn" id="ordersBtn" type="button" aria-label="Acompanhar pedidos" title="Acompanhar pedidos"><span aria-hidden="true">🧾</span></button>
+        <button class="icon-btn cart-trigger" type="button" aria-label="Abrir carrinho"><span aria-hidden="true">🛒</span><span class="cart-count" id="cartCount">0</span></button>
+      </div>
+    </header>
+
+    <main id="topo">
+      <div class="store-alert container" id="storeAlert" role="status" hidden></div>
+      <section class="hero container">
+        <div class="hero__content">
+          <span class="eyebrow">FEITO COM CARINHO 🤎</span>
+          <h1>Seu momento merece uma gostosura.</h1>
+          <p>Escolha seus favoritos, monte o carrinho e finalize o pedido sem sair daqui.</p>
+          <div class="hero__actions">
+            <a class="btn btn--primary" href="#cardapio">Ver cardápio</a>
+            <button class="btn btn--ghost" type="button" id="heroOrdersBtn">Acompanhar pedido</button>
+          </div>
+        </div>
+        <div class="hero__visual" aria-hidden="true">
+          <div class="hero-card"><div class="hero-card__emoji">🍰</div><div><strong>Doces, salgados e encomendas</strong><span id="heroStoreName">Atrevida Gourmet</span></div></div>
+        </div>
+      </section>
+
+      <section class="service-strip container" aria-label="Opções de atendimento">
+        <div id="deliveryCapability"><span aria-hidden="true">🚚</span><strong>Entrega</strong><small>taxa calculada no checkout</small></div>
+        <div id="pickupCapability"><span aria-hidden="true">🛍️</span><strong>Retirada</strong><small>direto com a loja</small></div>
+        <div id="scheduledCapability"><span aria-hidden="true">🎂</span><strong>Encomendas</strong><small>datas especiais</small></div>
+      </section>
+
+      <section class="catalog container" id="cardapio" aria-labelledby="catalogTitle">
+        <div class="section-heading">
+          <div><span class="eyebrow">CARDÁPIO</span><h2 id="catalogTitle">Escolha suas gostosuras</h2></div>
+          <p>Preços, disponibilidade e adicionais são confirmados pela loja.</p>
+        </div>
+        <label class="search" for="searchInput"><span aria-hidden="true">🔎</span><input id="searchInput" type="search" placeholder="O que você deseja?" autocomplete="off" enterkeyhint="search" /></label>
+        <nav class="category-tabs" id="categoryTabs" aria-label="Categorias"></nav>
+        <div class="catalog-feedback" id="catalogFeedback" role="status" aria-live="polite"></div>
+        <div class="product-grid" id="productGrid" aria-live="polite" aria-busy="true"></div>
+        <div class="empty-state" id="emptyState" hidden><div aria-hidden="true">🍴</div><strong>Nenhum item encontrado.</strong><span>Tente outro nome ou categoria.</span></div>
+      </section>
+
+      <section class="order-note container">
+        <div><span class="eyebrow">ENCOMENDAS</span><h2>Vai ter festa ou data especial?</h2><p>Bolos, doces e pedidos maiores podem ser combinados diretamente com a Atrevida.</p></div>
+        <button class="btn btn--secondary" type="button" id="showOrdersCategory">Ver encomendas</button>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer__inner">
+        <div><strong id="footerStoreName">Atrevida Gourmet</strong><span id="footerStoreDescription">Doces e salgados irresistíveis.</span></div>
+        <div class="footer__links"><a id="instagramLink" href="https://www.instagram.com/atrevida_gourmet/" target="_blank" rel="noopener noreferrer">@atrevida_gourmet</a><a id="whatsappLink" href="https://wa.me/5514997875460" target="_blank" rel="noopener noreferrer">WhatsApp (14) 99787-5460</a><a href="/admin/login/">Área da loja</a></div>
+      </div>
+    </footer>
+
+    <button class="floating-cart cart-trigger" id="floatingCart" type="button" hidden><span><strong id="floatingCartQty">0 itens</strong><small id="floatingCartTotal">R$ 0,00</small></span><b>Ver carrinho →</b></button>
+
+    <dialog class="modal" id="productModal" aria-labelledby="modalTitle">
+      <form class="modal__panel product-modal" id="productForm">
+        <button class="modal__close" type="button" id="productClose" aria-label="Fechar">×</button>
+        <div class="product-modal__image" id="modalImage"></div>
+        <div class="product-modal__content">
+          <span class="pill" id="modalBadge" hidden></span>
+          <h3 id="modalTitle"></h3><p id="modalDescription"></p>
+          <div class="price-row"><strong id="modalPrice"></strong><span id="modalPriceNote">O valor final é recalculado no servidor.</span></div>
+          <div class="option-groups" id="optionGroups"></div>
+          <label class="field"><span>Quantidade</span><div class="qty-control"><button type="button" id="qtyMinus" aria-label="Diminuir quantidade">−</button><output id="qtyValue" aria-live="polite">1</output><button type="button" id="qtyPlus" aria-label="Aumentar quantidade">+</button></div></label>
+          <label class="field"><span>Observação do item</span><textarea id="itemNote" rows="3" maxlength="300" placeholder="Ex.: sem cebola, separar molho..."></textarea></label>
+          <p class="form-error" id="productError" role="alert" hidden></p>
+          <button class="btn btn--primary btn--full" type="submit" id="addToCartBtn">Adicionar ao carrinho</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="drawer" id="cartDrawer" aria-labelledby="cartTitle">
+      <div class="drawer__panel">
+        <div class="drawer__header"><div><span class="eyebrow">SEU PEDIDO</span><h3 id="cartTitle">Carrinho</h3></div><button class="modal__close" type="button" data-close-dialog="cartDrawer" aria-label="Fechar">×</button></div>
+        <div class="cart-list" id="cartList"></div>
+        <div class="cart-summary"><div><span>Subtotal estimado</span><strong id="cartSubtotal">R$ 0,00</strong></div><small>O servidor confere produtos, opções, preço e taxa antes de criar o pedido.</small></div>
+        <button class="btn btn--primary btn--full" type="button" id="checkoutBtn">Continuar pedido</button>
+      </div>
+    </dialog>
+
+    <dialog class="modal" id="checkoutModal" aria-labelledby="checkoutTitle">
+      <form class="modal__panel checkout" id="checkoutForm" novalidate>
+        <button class="modal__close" type="button" id="checkoutClose" aria-label="Fechar">×</button>
+        <div><span class="eyebrow">CHECKOUT</span><h3 id="checkoutTitle">Finalize seu pedido 🤎</h3><p>Entrega, pagamento e confirmação acontecem aqui dentro.</p></div>
+        <fieldset class="segmented" id="fulfillmentOptions">
+          <legend>Como deseja receber?</legend>
+          <label><input type="radio" name="fulfillmentType" value="delivery" checked /><span>🚚 Entrega</span></label>
+          <label><input type="radio" name="fulfillmentType" value="pickup" /><span>🛍️ Retirada</span></label>
+          <label><input type="radio" name="fulfillmentType" value="scheduled" /><span>🎂 Encomenda</span></label>
+        </fieldset>
+        <div class="form-grid">
+          <label class="field"><span>Nome *</span><input type="text" name="name" required minlength="2" maxlength="100" autocomplete="name" placeholder="Seu nome" /></label>
+          <label class="field"><span>Telefone *</span><input type="tel" name="phone" required minlength="8" maxlength="24" autocomplete="tel" inputmode="tel" placeholder="(14) 99999-9999" /></label>
+          <div class="delivery-fields" id="deliveryFields">
+            <label class="field"><span>CEP</span><input type="text" name="postalCode" maxlength="10" autocomplete="postal-code" inputmode="numeric" placeholder="00000-000" /></label>
+            <label class="field"><span>Bairro *</span><input type="text" name="neighborhood" maxlength="100" autocomplete="address-level3" placeholder="Seu bairro" /></label>
+            <label class="field field--wide"><span>Rua *</span><input type="text" name="street" maxlength="120" autocomplete="address-line1" placeholder="Nome da rua" /></label>
+            <label class="field"><span>Número *</span><input type="text" name="number" maxlength="20" autocomplete="address-line2" placeholder="Número" /></label>
+            <label class="field"><span>Complemento</span><input type="text" name="complement" maxlength="120" placeholder="Opcional" /></label>
+            <label class="field field--wide"><span>Referência</span><input type="text" name="reference" maxlength="180" placeholder="Opcional" /></label>
+            <div class="quote-box field--wide"><button class="btn btn--ghost" type="button" id="quoteBtn">Calcular entrega</button><span id="quoteStatus" role="status" aria-live="polite">Informe o bairro para consultar a área de entrega.</span></div>
+          </div>
+          <div class="scheduled-fields field--wide" id="scheduledFields" hidden>
+            <label class="field"><span>Data e horário desejados *</span><input type="datetime-local" name="scheduledFor" /></label>
+            <small>A loja confirmará a disponibilidade do horário.</small>
+          </div>
+          <label class="field"><span>Pagamento *</span><select name="paymentMethod" id="paymentSelect" required><option value="">Carregando formas de pagamento…</option></select></label>
+          <label class="field" id="changeField" hidden><span>Troco para quanto?</span><input type="text" name="changeFor" inputmode="decimal" placeholder="Ex.: 50,00" /></label>
+          <label class="field field--wide"><span>Observação geral</span><textarea name="note" rows="3" maxlength="500" placeholder="Alguma observação para a loja?"></textarea></label>
+        </div>
+        <div class="checkout-total"><div class="checkout-row"><span>Subtotal estimado</span><strong id="checkoutSubtotal">R$ 0,00</strong></div><div class="checkout-row"><span>Entrega</span><strong id="checkoutDeliveryFee">A calcular</strong></div><div class="checkout-row checkout-row--total"><span>Total estimado</span><strong id="checkoutTotal">R$ 0,00</strong></div><small>O total definitivo é calculado e validado pelo servidor.</small></div>
+        <p class="form-error" id="checkoutError" role="alert" hidden></p>
+        <button class="btn btn--primary btn--full" type="submit" id="submitOrderBtn"><span>Confirmar pedido</span><span class="button-spinner" aria-hidden="true" hidden></span></button>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="successModal" aria-labelledby="successTitle">
+      <div class="modal__panel success-panel"><div class="success-icon" aria-hidden="true">✓</div><span class="eyebrow">PEDIDO RECEBIDO</span><h3 id="successTitle">Pedido enviado com sucesso!</h3><p>Acompanhe cada mudança de status sem precisar atualizar a página.</p><div class="order-confirmation"><span>Número do pedido</span><strong id="successOrderId"></strong><small id="successOrderStatus">Aguardando confirmação</small></div><button class="btn btn--primary btn--full" type="button" id="viewOrdersBtn">Acompanhar pedido</button><button class="btn btn--ghost btn--full" type="button" id="successCloseBtn">Voltar ao cardápio</button></div>
+    </dialog>
+
+    <dialog class="drawer" id="ordersDrawer" aria-labelledby="ordersTitle">
+      <div class="drawer__panel orders-panel">
+        <div class="drawer__header"><div><span class="eyebrow">ACOMPANHAMENTO</span><h3 id="ordersTitle">Meus pedidos</h3></div><button class="modal__close" type="button" id="ordersClose" aria-label="Fechar">×</button></div>
+        <form class="tracking-form" id="trackingForm"><label class="field"><span>Código de acompanhamento</span><input name="trackingToken" autocomplete="off" placeholder="Cole o código recebido" /></label><button class="btn btn--ghost" type="submit">Consultar</button></form>
+        <div class="orders-list" id="ordersList" aria-live="polite"></div>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>

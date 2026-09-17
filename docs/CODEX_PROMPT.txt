@@ -1,0 +1,21 @@
+Integre este patch ao projeto Atrevida sem reescrever o sistema do zero.
+
+Objetivo: tudo que o navegador recebe deve ser considerado público.
+
+Requisitos obrigatórios:
+
+1. O frontend só conversa com paths relativos /api/*.
+2. Remova qualquer acesso direto do browser ao Supabase.
+3. Nenhuma secret key, service role, database URL ou credencial pode entrar em HTML/JS/build.
+4. Use SUPABASE_SECRET_KEY apenas no backend.
+5. Em produção, não gerar source maps públicos.
+6. Todas as respostas públicas devem usar DTO/allowlist explícita; nunca retornar row completa ou select("*") em endpoint público.
+7. Tracking público não pode retornar nome, telefone, endereço ou qualquer PII além do necessário para a própria tela.
+8. Admin deve usar sessão segura; não guardar access/refresh/admin tokens em localStorage/sessionStorage.
+9. Respostas autenticadas ou sensíveis devem usar Cache-Control: no-store.
+10. Erros 5xx devem ser genéricos para o cliente, mantendo detalhes apenas nos logs server-side redigidos.
+11. Preserve rate limiting, body limits, idempotency, RLS e grants restritivos dos patches anteriores.
+12. Adicione o scanner de build ao CI e faça o deploy falhar se encontrar segredo ou *.map.
+13. Teste manualmente via DevTools Network/Application/Sources antes de declarar pronto.
+
+Não tente esconder endpoints ou IDs públicos. A segurança deve funcionar mesmo com todo o código frontend e formato das requests conhecidos.

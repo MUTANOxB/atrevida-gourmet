@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Atrevida Gourmet">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#4A2B24"/>
+      <stop offset="1" stop-color="#2D1C18"/>
+    </linearGradient>
+  </defs>
+  <circle cx="120" cy="120" r="116" fill="url(#bg)"/>
+  <circle cx="120" cy="120" r="100" fill="none" stroke="#D8A6A0" stroke-width="5"/>
+  <path d="M78 92c11-19 25-30 42-30s31 11 42 30c-14-8-28-12-42-12S92 84 78 92Z" fill="#C97E82"/>
+  <path d="M88 94h64v13c0 21-14 39-32 39s-32-18-32-39V94Z" fill="#FFF6EC"/>
+  <path d="M97 148h46" stroke="#D8A6A0" stroke-width="7" stroke-linecap="round"/>
+  <text x="120" y="178" text-anchor="middle" fill="#FFF6EC" font-size="23" font-family="Georgia, serif" font-weight="700">Atrevida</text>
+  <text x="120" y="198" text-anchor="middle" fill="#D8A6A0" font-size="13" font-family="Arial, sans-serif">gourmet</text>
+</svg>

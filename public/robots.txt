@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /admin/
+Disallow: /api/
+Allow: /
+
+# robots.txt não é controle de acesso.
+# /admin e /api DEVEM continuar protegidos no servidor.

@@ -1,0 +1,39 @@
+name: Frontend Leak Scan
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  leak-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build:frontend
+
+      - name: Scan public build
+        run: |
+          npm run test:f12
+          npm run scan:build
+
+      - name: Reject source maps
+        shell: bash
+        run: |
+          if find dist -type f -name '*.map' | grep -q .; then
+            echo "Source maps encontrados no build público."
+            exit 1
+          fi

@@ -1,0 +1,27 @@
+{
+  "name": "atrevida-gourmet-delivery",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Delivery white-label da Atrevida Gourmet",
+  "workspaces": [
+    "backend"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:backend": "npm run dev --workspace=backend",
+    "start": "npm run start --workspace=backend",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "build:backend": "npm run build --workspace=backend",
+    "typecheck": "npm run typecheck --workspace=backend",
+    "test": "npm run test --workspace=backend",
+    "test:frontend": "node scripts/check-frontend.mjs",
+    "test:f12": "node scripts/f12-build-check.mjs",
+    "test:scanner": "node scripts/test-build-scanner.mjs",
+    "scan:build": "node scripts/scan-public-build.mjs dist",
+    "check": "npm run typecheck && npm run test && npm run test:frontend && npm run test:scanner && npm run build && npm run test:f12 && npm run scan:build"
+  }
+}
