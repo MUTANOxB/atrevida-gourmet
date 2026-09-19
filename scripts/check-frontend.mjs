@@ -96,6 +96,7 @@ if (!/const API_BASE\s*=\s*["']\/api["']/.test(apiClient)) fail("O cliente HTTP 
 if (!apiClient.includes('"X-Store-Slug"')) fail("Requisições administrativas devem informar X-Store-Slug.");
 
 const publicApp = fs.readFileSync(path.join(root, "assets", "js", "app.js"), "utf8");
+const publicHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
 if (!publicApp.includes("item?.method")) fail("O catálogo deve aceitar paymentMethods[].method.");
 const pollInterval = publicApp.match(/TRACKING_POLL_INTERVAL_MS\s*=\s*([\d_]+)/)?.[1]?.replaceAll("_", "");
 if (!pollInterval || Number(pollInterval) < 60_000) fail("O polling de tracking deve respeitar o limite público da rota.");
@@ -119,6 +120,9 @@ if (!adminApp.includes("ORDER_FALLBACK_POLL_MS = 60_000")) {
 if (!adminApp.includes("newOrdersBadge")) {
   fail("O painel deve exibir o contador de novos pedidos.");
 }
+if (!adminApp.includes("function primaryOrderAction(order)") || adminApp.includes("NEXT_STATUS")) {
+  fail("O painel deve calcular uma única progressão conforme a modalidade do pedido.");
+}
 if (!adminApp.includes("uploadProductImage") || !apiClient.includes("/admin/uploads/product-images")) {
   fail("O upload administrativo de imagens deve passar exclusivamente pela API.");
 }
@@ -131,8 +135,14 @@ if (!adminCss.includes("user-select: none") || !adminCss.includes(".order-card__
   fail("A política de seleção do painel deve preservar dados copiáveis.");
 }
 
-if (!publicApp.includes("fulfillmentType === \"delivery\"")) {
-  fail("A timeline pública deve respeitar a modalidade do pedido.");
+if (!publicApp.includes("function orderStatusMessage(order)")) {
+  fail("O pedido público deve apresentar uma mensagem simples para o status atual.");
+}
+if (publicApp.includes("orderTimeline") || publicApp.includes("trackingForm")) {
+  fail("A interface pública não deve manter timeline nem formulário manual de tracking.");
+}
+if (/trackingToken|Código de acompanhamento|Cole o código/i.test(publicHtml)) {
+  fail("A interface pública não deve expor token ou código manual de tracking.");
 }
 if (!publicApp.includes("message: () => refreshTrackedOrder(token")) {
   fail("Eventos públicos devem atualizar o tracking sem refresh manual.");

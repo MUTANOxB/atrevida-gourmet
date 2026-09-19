@@ -459,11 +459,34 @@ test("rotas administrativas exigem uma sessao valida", async (context) => {
   assert.equal(invalidCookie.json().code, "REQUEST_FAILED");
 });
 
-test("status pronto respeita entrega e retirada", () => {
-  assert.equal(canTransitionOrder("ready", "out_for_delivery", "delivery"), true);
+test("progressão simples respeita entrega, retirada e encomenda", () => {
+  const assertFlow = (
+    fulfillmentType: "delivery" | "pickup" | "scheduled",
+    statuses: Array<"pending" | "confirmed" | "ready" | "out_for_delivery" | "completed">
+  ) => {
+    for (let index = 0; index < statuses.length - 1; index += 1) {
+      assert.equal(
+        canTransitionOrder(statuses[index], statuses[index + 1], fulfillmentType),
+        true,
+        `${fulfillmentType}: ${statuses[index]} -> ${statuses[index + 1]}`
+      );
+    }
+  };
+
+  assertFlow("delivery", ["pending", "confirmed", "out_for_delivery", "completed"]);
+  assertFlow("pickup", ["pending", "confirmed", "ready", "completed"]);
+  assertFlow("scheduled", ["pending", "confirmed", "ready", "completed"]);
+});
+
+test("transições inválidas são recusadas e status históricos têm saída segura", () => {
+  assert.equal(canTransitionOrder("pending", "ready", "pickup"), false);
+  assert.equal(canTransitionOrder("confirmed", "preparing", "delivery"), false);
+  assert.equal(canTransitionOrder("confirmed", "completed", "scheduled"), false);
   assert.equal(canTransitionOrder("ready", "completed", "delivery"), false);
-  assert.equal(canTransitionOrder("ready", "completed", "pickup"), true);
-  assert.equal(canTransitionOrder("ready", "completed", "scheduled"), true);
+  assert.equal(canTransitionOrder("out_for_delivery", "ready", "delivery"), false);
+  assert.equal(canTransitionOrder("completed", "cancelled", "pickup"), false);
+  assert.equal(canTransitionOrder("preparing", "out_for_delivery", "delivery"), true);
+  assert.equal(canTransitionOrder("preparing", "ready", "pickup"), true);
 });
 
 test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context) => {
@@ -477,6 +500,7 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   const orderId = "88888888-8888-4888-8888-888888888888";
   const calls: string[] = [];
   let membershipRole: "owner" | "manager" | "staff" = "manager";
+  let membershipStoreId = storeId;
   let storedImagePath = "";
   let storedImageProductId: string | null = null;
   let category = {
@@ -628,7 +652,7 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     }
     if (table === "store_members") {
       return jsonResponse({
-        store_id: storeId,
+        store_id: membershipStoreId,
         role: membershipRole,
         stores: { slug: "atrevida-gourmet" }
       });
@@ -652,6 +676,10 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     }
     if (table === "orders") {
       if (method === "GET" && select.includes("id,status,fulfillment_type")) {
+        if (
+          url.searchParams.get("id") !== `eq.${orderId}` ||
+          url.searchParams.get("store_id") !== `eq.${storeId}`
+        ) return jsonResponse(null);
         return jsonResponse({ id: orderId, status: orderStatus, fulfillment_type: "pickup" });
       }
       if (method === "GET") return jsonResponse([orderRow()]);
@@ -913,10 +941,19 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   assert.equal(staffOrders.statusCode, 200, staffOrders.body);
   const staffStatus = await app.inject({
     method: "PATCH", url: `/api/admin/orders/${orderId}/status`, headers: staffHeaders,
-    payload: { status: "preparing" }
+    payload: { status: "confirmed" }
   });
   assert.equal(staffStatus.statusCode, 200, staffStatus.body);
-  assert.equal(staffStatus.json().status, "preparing");
+  assert.equal(staffStatus.json().status, "confirmed");
+
+  membershipStoreId = "12121212-1212-4212-8212-121212121212";
+  const crossStoreStatus = await app.inject({
+    method: "PATCH", url: `/api/admin/orders/${orderId}/status`, headers: staffHeaders,
+    payload: { status: "ready" }
+  });
+  assert.equal(crossStoreStatus.statusCode, 404, crossStoreStatus.body);
+  assert.equal(orderStatus, "confirmed");
+  membershipStoreId = storeId;
 
   const logout = await app.inject({
     method: "DELETE", url: "/api/admin/session", headers: managerHeaders

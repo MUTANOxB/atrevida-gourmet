@@ -13,20 +13,14 @@ const PAYMENT_LABELS = {
   card_on_delivery: "Cartão no recebimento"
 };
 const STATUS_LABELS = {
-  pending: "Aguardando confirmação",
-  confirmed: "Confirmado",
+  pending: "Pedido recebido / aguardando confirmação",
+  confirmed: "Pedido confirmado",
   preparing: "Em preparo",
-  ready: "Pronto",
+  ready: "Pronto para retirada",
   out_for_delivery: "Saiu para entrega",
-  completed: "Concluído",
-  cancelled: "Cancelado"
+  completed: "Pedido concluído",
+  cancelled: "Pedido cancelado"
 };
-const FULFILLMENT_LABELS = {
-  delivery: "Entrega",
-  pickup: "Retirada",
-  scheduled: "Encomenda"
-};
-
 const state = {
   catalog: null,
   products: new Map(),
@@ -110,7 +104,6 @@ const els = {
   viewOrdersBtn: $("#viewOrdersBtn"),
   ordersDrawer: $("#ordersDrawer"),
   ordersList: $("#ordersList"),
-  trackingForm: $("#trackingForm"),
   ordersBtn: $("#ordersBtn"),
   heroOrdersBtn: $("#heroOrdersBtn"),
   ordersClose: $("#ordersClose"),
@@ -170,15 +163,6 @@ function normalizeText(value) {
 function money(cents, currency = state.catalog?.currency || "BRL") {
   const safeCents = Number.isFinite(Number(cents)) ? Number(cents) : 0;
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(safeCents / 100);
-}
-
-function localDateTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
-  }).format(date);
 }
 
 function uuid() {
@@ -753,8 +737,8 @@ async function submitCheckout(event) {
     saveCart(state.cart);
     renderCart();
     closeDialog(els.checkoutModal);
-    els.successOrderId.textContent = order.orderNumber;
-    els.successOrderStatus.textContent = STATUS_LABELS[order.status] || "Aguardando confirmação";
+    els.successOrderId.textContent = `Pedido #${order.orderNumber}`;
+    els.successOrderStatus.textContent = STATUS_LABELS[order.status] || "Pedido recebido / aguardando confirmação";
     showDialog(els.successModal);
     els.checkoutForm.reset();
     state.quote = null;
@@ -773,26 +757,25 @@ function normalizeTracking(payload) {
     orderNumber: payload.orderNumber || payload.order_number || "Pedido",
     status: payload.status || "pending",
     fulfillmentType: payload.fulfillmentType || payload.fulfillment_type || "",
-    subtotalCents: Number(payload.subtotalCents ?? payload.subtotal_cents ?? 0),
-    deliveryFeeCents: Number(payload.deliveryFeeCents ?? payload.delivery_fee_cents ?? 0),
-    totalCents: Number(payload.totalCents ?? payload.total_cents ?? 0),
-    createdAt: payload.createdAt || payload.created_at,
-    items: (payload.items || payload.order_items || []).map((item) => ({
-      name: item.name || item.productNameSnapshot || item.product_name_snapshot || "Item",
-      quantity: Number(item.quantity || 0),
-      lineTotalCents: Number(item.lineTotalCents ?? item.line_total_cents ?? 0),
-      options: item.options || item.options_snapshot || []
-    }))
+    totalCents: Number(payload.totalCents ?? payload.total_cents ?? 0)
   };
 }
 
-function orderTimeline(status, fulfillmentType) {
-  const flow = fulfillmentType === "delivery"
-    ? ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed"]
-    : ["pending", "confirmed", "preparing", "ready", "completed"];
-  if (status === "cancelled") return `<div class="tracking-cancelled">Pedido cancelado</div>`;
-  const current = Math.max(0, flow.indexOf(status));
-  return `<ol class="order-timeline" aria-label="Progresso do pedido">${flow.map((step, index) => `<li class="${index < current ? "is-done" : index === current ? "is-current" : ""}"><span aria-hidden="true"></span><small>${STATUS_LABELS[step]}</small></li>`).join("")}</ol>`;
+function orderStatusMessage(order) {
+  const messages = {
+    pending: "Recebemos seu pedido e aguardamos a confirmação da loja.",
+    confirmed: order.fulfillmentType === "delivery"
+      ? "Seu pedido foi confirmado e seguirá para entrega."
+      : "Seu pedido foi confirmado. Avisaremos quando estiver pronto.",
+    preparing: "Seu pedido está sendo preparado.",
+    ready: order.fulfillmentType === "delivery"
+      ? "Seu pedido está pronto e seguirá para entrega."
+      : "Seu pedido está pronto para retirada.",
+    out_for_delivery: "Seu pedido saiu para entrega.",
+    completed: "Seu pedido foi concluído.",
+    cancelled: "Este pedido foi cancelado."
+  };
+  return messages[order.status] || "Consulte a loja para saber mais sobre este pedido.";
 }
 
 function renderTrackedOrders() {
@@ -802,9 +785,9 @@ function renderTrackedOrders() {
   }
   els.ordersList.innerHTML = state.trackedOrders.map((entry) => {
     const order = entry.last ? normalizeTracking(entry.last) : null;
-    if (entry.error) return `<article class="order-track-card"><div class="order-track-card__top"><strong>${escapeHtml(entry.orderNumber || "Pedido")}</strong><span class="order-status">Indisponível</span></div><p>${escapeHtml(entry.error)}</p><button class="btn btn--ghost" type="button" data-refresh-order="${escapeHtml(entry.trackingToken)}">Tentar novamente</button></article>`;
+    if (entry.error) return `<article class="order-track-card"><div class="order-track-card__top"><strong>Pedido #${escapeHtml(entry.orderNumber || "—")}</strong><span class="order-status">Indisponível</span></div><p>${escapeHtml(entry.error)}</p></article>`;
     if (!order) return `<article class="order-track-card skeleton-order" aria-label="Carregando pedido"><span class="skeleton skeleton--title"></span><span class="skeleton skeleton--text"></span></article>`;
-    return `<article class="order-track-card"><div class="order-track-card__top"><strong>${escapeHtml(order.orderNumber)}</strong><span class="order-status status--${escapeHtml(order.status)}">${escapeHtml(STATUS_LABELS[order.status] || order.status)}</span></div><small>${escapeHtml(localDateTime(order.createdAt))} · ${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</small>${orderTimeline(order.status, order.fulfillmentType)}<details><summary>${order.items.length} ${order.items.length === 1 ? "item" : "itens"}</summary><ul class="tracked-items">${order.items.map((item) => `<li><span>${item.quantity}× ${escapeHtml(item.name)}</span><strong>${money(item.lineTotalCents)}</strong></li>`).join("")}</ul></details><div class="order-track-card__bottom"><span>Total</span><strong>${money(order.totalCents)}</strong></div><button class="text-button" type="button" data-refresh-order="${escapeHtml(entry.trackingToken)}">Atualizar agora</button></article>`;
+    return `<article class="order-track-card"><div class="order-track-card__top"><strong>Pedido #${escapeHtml(order.orderNumber)}</strong><span class="order-status status--${escapeHtml(order.status)}">${escapeHtml(STATUS_LABELS[order.status] || "Status atualizado")}</span></div><p>${escapeHtml(orderStatusMessage(order))}</p><div class="order-track-card__bottom"><span>Total</span><strong>${money(order.totalCents)}</strong></div></article>`;
   }).join("");
 }
 
@@ -878,27 +861,6 @@ function openOrders() {
   startTrackingUpdates();
 }
 
-async function addManualTracking(event) {
-  event.preventDefault();
-  const input = els.trackingForm.elements.trackingToken;
-  const button = $("button[type='submit']", els.trackingForm);
-  const token = input.value.trim();
-  if (!token) return;
-  if (!state.trackedOrders.some((entry) => entry.trackingToken === token)) {
-    state.trackedOrders.unshift({ trackingToken: token, orderNumber: "Pedido" });
-    state.trackedOrders = state.trackedOrders.slice(0, 10);
-  }
-  renderTrackedOrders();
-  setButtonBusy(button, true, "Consultando…");
-  try {
-    await refreshTrackedOrder(token);
-    syncTrackingStreams();
-    input.value = "";
-  } finally {
-    setButtonBusy(button, false);
-  }
-}
-
 function wireEvents() {
   document.addEventListener("error", (event) => {
     const image = event.target;
@@ -963,11 +925,6 @@ function wireEvents() {
   els.heroOrdersBtn.addEventListener("click", openOrders);
   els.ordersClose.addEventListener("click", () => { closeDialog(els.ordersDrawer); stopTrackingUpdates(); });
   els.ordersDrawer.addEventListener("close", stopTrackingUpdates);
-  els.trackingForm.addEventListener("submit", addManualTracking);
-  els.ordersList.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-refresh-order]");
-    if (button) refreshTrackedOrder(button.dataset.refreshOrder);
-  });
   els.viewOrdersBtn.addEventListener("click", () => { closeDialog(els.successModal); openOrders(); });
   els.successCloseBtn.addEventListener("click", () => { closeDialog(els.successModal); document.querySelector("#cardapio").scrollIntoView({ behavior: "smooth" }); });
   els.showOrdersCategory.addEventListener("click", () => {

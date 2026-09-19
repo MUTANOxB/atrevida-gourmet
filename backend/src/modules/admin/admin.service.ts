@@ -177,18 +177,27 @@ export function canTransitionOrder(
   fulfillmentType: "delivery" | "pickup" | "scheduled"
 ) {
   if (from === to) return true;
-  const common: Partial<Record<OrderStatus, OrderStatus[]>> = {
-    pending: ["confirmed", "cancelled"],
-    confirmed: ["preparing", "cancelled"],
-    preparing: ["ready", "cancelled"],
-    out_for_delivery: ["completed", "cancelled"]
-  };
+  if (to === "cancelled") {
+    return !["completed", "cancelled"].includes(from);
+  }
+  if (from === "pending") return to === "confirmed";
+  if (from === "confirmed") {
+    return fulfillmentType === "delivery"
+      ? to === "out_for_delivery"
+      : to === "ready";
+  }
+  // Compatibilidade: pedidos antigos em preparo ainda podem seguir no fluxo novo.
+  if (from === "preparing") {
+    return fulfillmentType === "delivery"
+      ? to === "out_for_delivery"
+      : to === "ready";
+  }
   if (from === "ready") {
     return fulfillmentType === "delivery"
-      ? ["out_for_delivery", "cancelled"].includes(to)
-      : ["completed", "cancelled"].includes(to);
+      ? to === "out_for_delivery"
+      : to === "completed";
   }
-  return common[from]?.includes(to) ?? false;
+  return from === "out_for_delivery" && to === "completed";
 }
 
 export async function updateOrderStatus(

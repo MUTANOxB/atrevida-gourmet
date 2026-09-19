@@ -23,29 +23,15 @@ const state = {
 };
 
 const STATUS_LABELS = {
-  pending: "Novos",
-  confirmed: "Confirmados",
-  preparing: "Em preparo",
-  ready: "Prontos",
+  pending: "Pedidos recebidos",
+  confirmed: "Pedidos confirmados",
+  preparing: "Em preparo (histórico)",
+  ready: "Prontos para retirada",
   out_for_delivery: "Saiu para entrega",
-  completed: "Concluídos",
-  cancelled: "Cancelados"
+  completed: "Pedidos concluídos",
+  cancelled: "Pedidos cancelados"
 };
 const STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed", "cancelled"];
-const NEXT_STATUS = {
-  pending: "confirmed",
-  confirmed: "preparing",
-  preparing: "ready",
-  ready: "out_for_delivery",
-  out_for_delivery: "completed"
-};
-const ACTION_LABELS = {
-  confirmed: "Aceitar",
-  preparing: "Iniciar preparo",
-  ready: "Marcar pronto",
-  out_for_delivery: "Saiu para entrega",
-  completed: "Concluir"
-};
 const FULFILLMENT_LABELS = { delivery: "Entrega", pickup: "Retirada", scheduled: "Encomenda" };
 const PAYMENT_LABELS = { pix: "Pix", cash: "Dinheiro", card_on_delivery: "Cartão no recebimento" };
 const PAYMENT_METHODS = [
@@ -312,17 +298,34 @@ function filteredOrders() {
   });
 }
 
+function primaryOrderAction(order) {
+  const fulfillment = order.fulfillmentType;
+  if (order.status === "pending") {
+    return { status: "confirmed", label: fulfillment === "scheduled" ? "Aceitar encomenda" : "Aceitar pedido" };
+  }
+  if (["confirmed", "preparing"].includes(order.status)) {
+    return fulfillment === "delivery"
+      ? { status: "out_for_delivery", label: "Saiu para entrega" }
+      : { status: "ready", label: fulfillment === "scheduled" ? "Marcar como pronto" : "Pronto para retirada" };
+  }
+  if (order.status === "ready") {
+    return fulfillment === "delivery"
+      ? { status: "out_for_delivery", label: "Saiu para entrega" }
+      : { status: "completed", label: fulfillment === "pickup" ? "Concluir retirada" : "Concluir pedido" };
+  }
+  if (order.status === "out_for_delivery") return { status: "completed", label: "Concluir pedido" };
+  return null;
+}
+
 function renderOrderCard(order) {
-  const next = order.status === "ready" && order.fulfillmentType !== "delivery"
-    ? "completed"
-    : NEXT_STATUS[order.status];
+  const primaryAction = primaryOrderAction(order);
   const scheduled = order.scheduledFor ? `<span class="tag">📅 ${escapeHtml(dateTime(order.scheduledFor))}</span>` : "";
   const active = !["completed", "cancelled"].includes(order.status);
   const actions = [
-    next ? `<button class="btn btn--secondary" type="button" data-order-status="${next}" data-order-id="${escapeHtml(order.id)}">${escapeHtml(ACTION_LABELS[next])}</button>` : "",
-    active ? `<button class="btn btn--ghost" type="button" data-order-status="cancelled" data-order-id="${escapeHtml(order.id)}">Cancelar</button>` : ""
+    primaryAction ? `<button class="btn btn--primary" type="button" data-order-status="${primaryAction.status}" data-order-id="${escapeHtml(order.id)}">${escapeHtml(primaryAction.label)}</button>` : "",
+    active ? `<button class="btn btn--danger" type="button" data-order-status="cancelled" data-order-id="${escapeHtml(order.id)}">Cancelar pedido</button>` : ""
   ].filter(Boolean).join("");
-  return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
+  return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">Pedido #${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
 }
 
 function renderOrders() {
@@ -416,7 +419,7 @@ function openOrderDetails(orderId) {
   if (!order) return;
   state.newOrderIds.delete(orderId);
   const address = [order.delivery.street, order.delivery.number, order.delivery.neighborhood, order.delivery.complement].filter(Boolean).join(", ");
-  $("#orderDialogTitle").textContent = order.orderNumber;
+  $("#orderDialogTitle").textContent = `Pedido #${order.orderNumber}`;
   $("#orderDetails").innerHTML = `<section class="dialog-section"><div class="detail-grid"><div class="detail"><small>Status</small><strong>${escapeHtml(STATUS_LABELS[order.status] || order.status)}</strong></div><div class="detail"><small>Recebimento</small><strong>${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</strong></div><div class="detail"><small>Cliente</small><strong>${escapeHtml(order.customerName)}</strong></div><div class="detail"><small>Telefone</small><span>${escapeHtml(order.customerPhone)}</span></div>${order.scheduledFor ? `<div class="detail"><small>Agendado para</small><strong>${escapeHtml(dateTime(order.scheduledFor))}</strong></div>` : ""}<div class="detail"><small>Pagamento</small><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong></div></div></section>${address ? `<section class="dialog-section"><h3>Entrega</h3><div class="detail"><span>${escapeHtml(address)}</span>${order.delivery.postalCode ? `<small>CEP ${escapeHtml(order.delivery.postalCode)}</small>` : ""}${order.delivery.reference ? `<small>Referência: ${escapeHtml(order.delivery.reference)}</small>` : ""}</div></section>` : ""}<section class="dialog-section"><h3>Itens</h3><ul class="item-list">${order.items.map((item) => `<li><span><strong>${item.quantity}× ${escapeHtml(item.name)}</strong>${optionNames(item.options) ? `<br><small>${escapeHtml(optionNames(item.options))}</small>` : ""}${item.note ? `<br><small>Obs.: ${escapeHtml(item.note)}</small>` : ""}</span><strong>${money(item.lineTotalCents)}</strong></li>`).join("")}</ul></section>${order.note ? `<section class="dialog-section"><h3>Observação</h3><div class="detail"><span>${escapeHtml(order.note)}</span></div></section>` : ""}<section class="dialog-section"><div class="detail-grid"><div class="detail"><small>Subtotal</small><strong>${money(order.subtotalCents)}</strong></div><div class="detail"><small>Entrega</small><strong>${money(order.deliveryFeeCents)}</strong></div><div class="detail"><small>Total</small><strong>${money(order.totalCents)}</strong></div>${order.changeForCents !== null ? `<div class="detail"><small>Troco para</small><strong>${money(order.changeForCents)}</strong></div>` : ""}</div></section>`;
   showDialog("orderDialog");
   renderOrders();

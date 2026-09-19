@@ -141,13 +141,12 @@
     </dialog>
 
     <dialog class="modal" id="successModal" aria-labelledby="successTitle">
-      <div class="modal__panel success-panel"><div class="success-icon" aria-hidden="true">✓</div><span class="eyebrow">PEDIDO RECEBIDO</span><h3 id="successTitle">Pedido enviado com sucesso!</h3><p>Acompanhe cada mudança de status sem precisar atualizar a página.</p><div class="order-confirmation"><span>Número do pedido</span><strong id="successOrderId"></strong><small id="successOrderStatus">Aguardando confirmação</small></div><button class="btn btn--primary btn--full" type="button" id="viewOrdersBtn">Acompanhar pedido</button><button class="btn btn--ghost btn--full" type="button" id="successCloseBtn">Voltar ao cardápio</button></div>
+      <div class="modal__panel success-panel"><div class="success-icon" aria-hidden="true">✓</div><span class="eyebrow">PEDIDO RECEBIDO</span><h3 id="successTitle">Pedido enviado com sucesso!</h3><p>A loja recebeu seu pedido e fará a confirmação.</p><div class="order-confirmation"><span>Número do pedido</span><strong id="successOrderId"></strong><small id="successOrderStatus">Pedido recebido / aguardando confirmação</small></div><button class="btn btn--primary btn--full" type="button" id="viewOrdersBtn">Ver pedido</button><button class="btn btn--ghost btn--full" type="button" id="successCloseBtn">Voltar ao cardápio</button></div>
     </dialog>
 
     <dialog class="drawer" id="ordersDrawer" aria-labelledby="ordersTitle">
       <div class="drawer__panel orders-panel">
-        <div class="drawer__header"><div><span class="eyebrow">ACOMPANHAMENTO</span><h3 id="ordersTitle">Meus pedidos</h3></div><button class="modal__close" type="button" id="ordersClose" aria-label="Fechar">×</button></div>
-        <form class="tracking-form" id="trackingForm"><label class="field"><span>Código de acompanhamento</span><input name="trackingToken" autocomplete="off" placeholder="Cole o código recebido" /></label><button class="btn btn--ghost" type="submit">Consultar</button></form>
+        <div class="drawer__header"><div><span class="eyebrow">SEUS PEDIDOS</span><h3 id="ordersTitle">Meus pedidos</h3></div><button class="modal__close" type="button" id="ordersClose" aria-label="Fechar">×</button></div>
         <div class="orders-list" id="ordersList" aria-live="polite"></div>
       </div>
     </dialog>
