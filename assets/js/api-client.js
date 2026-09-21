@@ -164,6 +164,10 @@ export const api = {
     return apiFetch("/admin/store");
   },
 
+  ensureInitialStoreData() {
+    return jsonRequest("/admin/store/initial-data", "POST", {});
+  },
+
   updateStoreSettings(input) {
     return jsonRequest("/admin/store", "PATCH", input);
   },

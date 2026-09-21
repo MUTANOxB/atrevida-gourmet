@@ -8,6 +8,7 @@ export type OrderStatus = z.infer<typeof orderStatusSchema>;
 
 export const uuidParams = z.object({ id: z.string().uuid() }).strict();
 export const orderIdParams = z.object({ orderId: z.string().uuid() }).strict();
+export const emptyBody = z.object({}).strict();
 export const updateOrderStatusBody = z.object({
   status: orderStatusSchema,
   reason: z.string().trim().max(300).optional()

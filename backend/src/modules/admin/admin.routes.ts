@@ -13,6 +13,7 @@ import {
   createOptionValueBody,
   createProductBody,
   createZoneBody,
+  emptyBody,
   listOrdersQuery,
   orderIdParams,
   replaceHoursBody,
@@ -39,6 +40,7 @@ import {
   deactivateProduct,
   deactivateZone,
   deleteException,
+  ensureStoreInitialData,
   getAdminOrder,
   getStoreSettings,
   listAdminOrders,
@@ -165,6 +167,10 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/api/admin/store", managerRead, async (request) =>
     getStoreSettings(request.admin!.storeId));
+  app.post("/api/admin/store/initial-data", managerWrite, async (request) => {
+    emptyBody.parse(request.body);
+    return ensureStoreInitialData(actor(request));
+  });
   app.patch("/api/admin/store", managerWrite, async (request) =>
     updateStoreSettings(actor(request), updateStoreBody.parse(request.body)));
 

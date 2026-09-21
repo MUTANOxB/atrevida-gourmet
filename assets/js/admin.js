@@ -486,8 +486,14 @@ function normalizeOptionValue(item) {
 
 async function loadProductData() {
   try {
-    const [categoryPayload, productPayload] = await Promise.all([api.listAdmin("categories"), api.listAdmin("products")]);
-    state.categories = asList(categoryPayload, "categories").map(normalizeCategory).sort((a, b) => a.sortOrder - b.sortOrder);
+    let [categoryPayload, productPayload] = await Promise.all([api.listAdmin("categories"), api.listAdmin("products")]);
+    let categories = asList(categoryPayload, "categories").map(normalizeCategory).sort((a, b) => a.sortOrder - b.sortOrder);
+    if (!categories.length) {
+      await api.ensureInitialStoreData();
+      categoryPayload = await api.listAdmin("categories");
+      categories = asList(categoryPayload, "categories").map(normalizeCategory).sort((a, b) => a.sortOrder - b.sortOrder);
+    }
+    state.categories = categories;
     state.products = asList(productPayload, "products").map(normalizeProduct).sort((a, b) => a.sortOrder - b.sortOrder);
     populateCategorySelects();
     renderProductsAdmin();
@@ -500,9 +506,18 @@ function populateCategorySelects() {
   const options = state.categories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("");
   $("#productCategoryFilter").innerHTML = `<option value="">Todas</option>${options}`;
   $("#productAdminForm").elements.categoryId.innerHTML = `<option value="">Selecione</option>${options}`;
+  const hasCategories = state.categories.length > 0;
+  $("#newProduct").disabled = !hasCategories;
+  $("#newProduct").title = hasCategories ? "" : "Crie uma categoria antes de cadastrar um produto.";
+  $("#productCategoryFilter").disabled = !hasCategories;
 }
 
 function renderProductsAdmin() {
+  if (!state.categories.length) {
+    $("#productCount").textContent = "0 produtos";
+    $("#productList").innerHTML = `<div class="empty-panel"><strong>Crie uma categoria antes de cadastrar seu primeiro produto.</strong><a class="btn btn--primary empty-panel__action" href="/admin/categorias/">Criar categoria</a></div>`;
+    return;
+  }
   const term = normalizeText($("#productSearch").value);
   const categoryId = $("#productCategoryFilter").value;
   const list = state.products.filter((product) => (!categoryId || product.categoryId === categoryId) && (!term || normalizeText(`${product.name} ${product.description}`).includes(term)));
@@ -514,6 +529,10 @@ function renderProductsAdmin() {
 }
 
 function openProductForm(product = null) {
+  if (!state.categories.length) {
+    toast("Crie uma categoria antes de cadastrar seu primeiro produto.", "error");
+    return;
+  }
   const form = $("#productAdminForm");
   form.reset();
   form.elements.id.value = product?.id || "";

@@ -43,17 +43,38 @@ set
   whatsapp_e164 = excluded.whatsapp_e164,
   whatsapp_display = excluded.whatsapp_display;
 
+-- Preserve products linked to the exact legacy seed category while adopting
+-- the confirmed commercial name/slug. If the destination already exists,
+-- leave both existing records untouched rather than deleting or merging data.
+update public.categories category
+set
+  name = 'Doces e Sobremesas',
+  slug = 'doces-e-sobremesas',
+  sort_order = 20,
+  active = true
+from public.stores store
+where category.store_id = store.id
+  and store.slug = 'atrevida-gourmet'
+  and category.name = 'Sobremesas'
+  and category.slug = 'sobremesas'
+  and not exists (
+    select 1
+    from public.categories confirmed
+    where confirmed.store_id = store.id
+      and confirmed.slug = 'doces-e-sobremesas'
+  );
+
 with target_store as (
   select id
   from public.stores
   where slug = 'atrevida-gourmet'
 ), seed_categories(name, slug, sort_order) as (
   values
-    ('Sobremesas', 'sobremesas', 10),
-    ('Salgados', 'salgados', 20),
+    ('Salgados', 'salgados', 0),
+    ('Crepes', 'crepes', 10),
+    ('Doces e Sobremesas', 'doces-e-sobremesas', 20),
     ('Bolos', 'bolos', 30),
-    ('Bebidas', 'bebidas', 40),
-    ('Sazonais', 'sazonais', 50)
+    ('Bebidas', 'bebidas', 40)
 )
 insert into public.categories (
   store_id,
@@ -70,7 +91,11 @@ select
   true
 from target_store
 cross join seed_categories
-on conflict (store_id, slug) do nothing;
+on conflict (store_id, slug) do update
+set
+  name = excluded.name,
+  sort_order = excluded.sort_order,
+  active = true;
 
 with target_store as (
   select id
@@ -85,22 +110,16 @@ with target_store as (
 ) as (
   values
     -- Confirmed products and prices.
-    ('sobremesas', 'Cacerola', 600, true, 10),
-    ('sobremesas', 'Copo Pudim', 1500, true, 20),
-
-    -- Confirmed seasonal material. Prices are known, current availability
-    -- is not, so these remain inactive until explicitly published.
-    ('sazonais', 'Ovo de Páscoa 250 g', 5000, false, 10),
-    ('sazonais', 'Ovo de Páscoa 400 g', 8000, false, 20),
-    ('sazonais', 'Ovo de Páscoa 500 g', 10000, false, 30),
+    ('doces-e-sobremesas', 'Cacerola', 600, true, 10),
+    ('doces-e-sobremesas', 'Copo Pudim', 1500, true, 20),
 
     -- Known items without a confirmed price. NULL + inactive makes them
     -- visible to admins for completion but impossible to purchase.
     ('salgados', 'Coxinha', null, false, 10),
     ('salgados', 'Mini coxinhas', null, false, 20),
     ('salgados', 'Torta de frango', null, false, 30),
-    ('sobremesas', 'Pavê', null, false, 30),
-    ('sobremesas', 'Torta de Ferrero Rocher', null, false, 40),
+    ('doces-e-sobremesas', 'Pavê', null, false, 30),
+    ('doces-e-sobremesas', 'Torta de Ferrero Rocher', null, false, 40),
     ('bolos', 'Bolos', null, false, 10),
     ('bebidas', 'Bebidas', null, false, 10)
 )

@@ -9,6 +9,16 @@ import {
 
 type Actor = { storeId: string; userId: string };
 
+const INITIAL_CATEGORIES_BY_STORE = {
+  "atrevida-gourmet": [
+    { name: "Salgados", slug: "salgados", sortOrder: 0 },
+    { name: "Crepes", slug: "crepes", sortOrder: 10 },
+    { name: "Doces e Sobremesas", slug: "doces-e-sobremesas", sortOrder: 20 },
+    { name: "Bolos", slug: "bolos", sortOrder: 30 },
+    { name: "Bebidas", slug: "bebidas", sortOrder: 40 }
+  ]
+} as const;
+
 function databaseFailure(message: string): never {
   throw new HttpError(503, message);
 }
@@ -276,6 +286,49 @@ export async function listCategories(storeId: string) {
     .eq("store_id", storeId).order("sort_order");
   if (error) databaseFailure("Falha ao carregar categorias.");
   return (data ?? []).map(categoryDto);
+}
+
+export async function ensureStoreInitialData(actor: Actor) {
+  const { data: store, error: storeError } = await supabaseAdmin
+    .from("stores")
+    .select("slug")
+    .eq("id", actor.storeId)
+    .maybeSingle();
+  if (storeError) databaseFailure("Falha ao validar os dados iniciais da loja.");
+  if (!store) throw new HttpError(404, "Loja não encontrada.");
+
+  const initialCategories = INITIAL_CATEGORIES_BY_STORE[
+    store.slug as keyof typeof INITIAL_CATEGORIES_BY_STORE
+  ];
+  if (!initialCategories) return { applied: false, categoriesChanged: 0 };
+
+  const { data: currentData, error: currentError } = await supabaseAdmin
+    .from("categories")
+    .select("id")
+    .eq("store_id", actor.storeId);
+  if (currentError) databaseFailure("Falha ao validar as categorias iniciais.");
+  if ((currentData ?? []).length > 0) {
+    return { applied: false, categoriesChanged: 0 };
+  }
+
+  const { error } = await supabaseAdmin.from("categories").upsert(
+    initialCategories.map((category) => ({
+      store_id: actor.storeId,
+      name: category.name,
+      slug: category.slug,
+      sort_order: category.sortOrder,
+      active: true
+    })),
+    { onConflict: "store_id,slug" }
+  );
+  if (error) databaseFailure("Falha ao cadastrar as categorias iniciais.");
+
+  await audit(actor, "store.initial_data_initialized", "store", actor.storeId, {
+    categoriesCreated: initialCategories.length,
+    categorySlugs: initialCategories.map((category) => category.slug)
+  });
+
+  return { applied: true, categoriesChanged: initialCategories.length };
 }
 
 export async function createCategory(actor: Actor, input: any) {

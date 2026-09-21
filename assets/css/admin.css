@@ -283,6 +283,7 @@ select,
 .empty-panel strong, .empty-panel span { display: block; }
 .empty-panel strong { margin-bottom: 5px; color: var(--chocolate); }
 .empty-panel span { font-size: .74rem; }
+.empty-panel__action { display: inline-flex; margin-top: 14px; }
 
 dialog { width: 100%; max-width: none; max-height: none; padding: 0; border: 0; background: transparent; }
 dialog::backdrop { background: rgba(31,18,15,.55); backdrop-filter: blur(5px); }

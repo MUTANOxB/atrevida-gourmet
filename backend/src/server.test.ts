@@ -503,6 +503,8 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   let membershipStoreId = storeId;
   let storedImagePath = "";
   let storedImageProductId: string | null = null;
+  let initialCategories: Array<Record<string, any>> = [];
+  let categoryCreated = false;
   let category = {
     id: categoryId,
     name: "Doces",
@@ -689,10 +691,31 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
       }
     }
     if (table === "categories") {
-      if (method === "GET" && select === "id") return jsonResponse({ id: categoryId });
-      if (method === "GET") return jsonResponse([category]);
+      if (method === "GET" && select === "id") {
+        if (url.searchParams.has("id")) return jsonResponse({ id: categoryId });
+        return jsonResponse([
+          ...(categoryCreated ? [{ id: categoryId }] : []),
+          ...initialCategories.map((item) => ({ id: item.id }))
+        ]);
+      }
+      if (method === "GET") return jsonResponse([
+        ...(categoryCreated ? [category] : []),
+        ...initialCategories
+      ]);
       if (method === "POST") {
+        if (Array.isArray(body)) {
+          for (const row of body as Array<Record<string, any>>) {
+            const existing = initialCategories.find((item) => item.slug === row.slug);
+            if (existing) Object.assign(existing, row);
+            else initialCategories.push({
+              id: `initial-${initialCategories.length + 1}`,
+              ...row
+            });
+          }
+          return jsonResponse(initialCategories, 201);
+        }
         category = { id: categoryId, name: input.name, slug: input.slug, active: input.active, sort_order: input.sort_order };
+        categoryCreated = true;
         return jsonResponse(category, 201);
       }
       if (method === "PATCH") {
@@ -828,6 +851,51 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   assert.equal(status.statusCode, 200, status.body);
   assert.equal(status.json().status, "confirmed");
 
+  await context.test(
+    "bootstrap cria categorias uma vez e não recria a removida pelo administrador",
+    async () => {
+      const initialData = await app.inject({
+        method: "POST", url: "/api/admin/store/initial-data", headers: managerHeaders,
+        payload: {}
+      });
+      assert.equal(initialData.statusCode, 200, initialData.body);
+      assert.deepEqual(initialData.json(), { applied: true, categoriesChanged: 5 });
+      assert.deepEqual(
+        initialCategories.map((item) => [item.name, item.slug, item.sort_order, item.active]),
+        [
+          ["Salgados", "salgados", 0, true],
+          ["Crepes", "crepes", 10, true],
+          ["Doces e Sobremesas", "doces-e-sobremesas", 20, true],
+          ["Bolos", "bolos", 30, true],
+          ["Bebidas", "bebidas", 40, true]
+        ]
+      );
+
+      const initialDataReplay = await app.inject({
+        method: "POST", url: "/api/admin/store/initial-data", headers: managerHeaders,
+        payload: {}
+      });
+      assert.deepEqual(initialDataReplay.json(), { applied: false, categoriesChanged: 0 });
+
+      initialCategories = initialCategories.filter((item) => item.slug !== "crepes");
+      const afterAdminRemoval = await app.inject({
+        method: "POST", url: "/api/admin/store/initial-data", headers: managerHeaders,
+        payload: {}
+      });
+      assert.deepEqual(afterAdminRemoval.json(), { applied: false, categoriesChanged: 0 });
+      assert.equal(initialCategories.some((item) => item.slug === "crepes"), false);
+      assert.equal(initialCategories.length, 4);
+    }
+  );
+
+  store.slug = "outra-loja";
+  const otherStoreInitialData = await app.inject({
+    method: "POST", url: "/api/admin/store/initial-data", headers: managerHeaders,
+    payload: {}
+  });
+  assert.deepEqual(otherStoreInitialData.json(), { applied: false, categoriesChanged: 0 });
+  store.slug = "atrevida-gourmet";
+
   const createdCategory = await app.inject({
     method: "POST", url: "/api/admin/categories", headers: managerHeaders,
     payload: { name: "Doces", slug: "doces", active: true, sortOrder: 0 }
@@ -935,6 +1003,11 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     method: "GET", url: "/api/admin/categories", headers: staffHeaders
   });
   assert.equal(forbidden.statusCode, 403, forbidden.body);
+  const forbiddenInitialData = await app.inject({
+    method: "POST", url: "/api/admin/store/initial-data",
+    headers: { ...staffHeaders, origin }, payload: {}
+  });
+  assert.equal(forbiddenInitialData.statusCode, 403, forbiddenInitialData.body);
   const staffOrders = await app.inject({
     method: "GET", url: "/api/admin/orders", headers: staffHeaders
   });

@@ -102,6 +102,7 @@ const pollInterval = publicApp.match(/TRACKING_POLL_INTERVAL_MS\s*=\s*([\d_]+)/)
 if (!pollInterval || Number(pollInterval) < 60_000) fail("O polling de tracking deve respeitar o limite público da rota.");
 
 const adminApp = fs.readFileSync(path.join(root, "assets", "js", "admin.js"), "utf8");
+const productsAdminHtml = fs.readFileSync(path.join(root, "admin", "cardapio", "index.html"), "utf8");
 for (const contract of ["storeSlug: STORE_SLUG", "exceptionDate:", "isClosed:", "scheduledMinLeadMinutes", "scheduledMaxAdvanceDays"]) {
   if (!adminApp.includes(contract)) fail(`Contrato administrativo ausente: ${contract}`);
 }
@@ -122,6 +123,16 @@ if (!adminApp.includes("newOrdersBadge")) {
 }
 if (!adminApp.includes("function primaryOrderAction(order)") || adminApp.includes("NEXT_STATUS")) {
   fail("O painel deve calcular uma única progressão conforme a modalidade do pedido.");
+}
+if (
+  !adminApp.includes("Crie uma categoria antes de cadastrar seu primeiro produto.") ||
+  !adminApp.includes('href="/admin/categorias/"') ||
+  !productsAdminHtml.includes('id="newProduct" disabled') ||
+  !adminApp.includes("if (!categories.length)") ||
+  !adminApp.includes("await api.ensureInitialStoreData()") ||
+  !apiClient.includes('jsonRequest("/admin/store/initial-data", "POST", {})')
+) {
+  fail("O cardápio sem categorias deve bloquear o produto e orientar a criação da categoria.");
 }
 if (!adminApp.includes("uploadProductImage") || !apiClient.includes("/admin/uploads/product-images")) {
   fail("O upload administrativo de imagens deve passar exclusivamente pela API.");
