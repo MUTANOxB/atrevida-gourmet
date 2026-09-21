@@ -23,11 +23,26 @@ test("cartão na entrega inicia como pagamento na entrega", () => {
   });
 });
 
-test("Pix pendente bloqueia aceite e Pix aprovado permite o fluxo", () => {
+test("direct_pix pendente bloqueia aceite", () => {
   assert.equal(canAcceptOrderPayment("direct_pix", "pending"), false);
+});
+
+test("direct_pix recusado bloqueia aceite", () => {
+  assert.equal(canAcceptOrderPayment("direct_pix", "rejected"), false);
+});
+
+test("direct_pix cancelado bloqueia aceite", () => {
+  assert.equal(canAcceptOrderPayment("direct_pix", "cancelled"), false);
+});
+
+test("direct_pix estornado bloqueia aceite", () => {
+  assert.equal(canAcceptOrderPayment("direct_pix", "refunded"), false);
+});
+
+test("direct_pix aprovado permite aceite", () => {
   assert.equal(canAcceptOrderPayment("direct_pix", "approved"), true);
 });
 
-test("pagamento na entrega segue sem confirmação prévia", () => {
+test("offline com pagamento na entrega permite aceite", () => {
   assert.equal(canAcceptOrderPayment("offline", "pay_on_delivery"), true);
 });

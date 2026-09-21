@@ -64,7 +64,9 @@ set
     else 'offline'::public.payment_provider
   end,
   payment_status = case
-    when payment_method = 'pix' then 'pending'::public.payment_status
+    when payment_method = 'pix' and status = 'pending' then 'pending'::public.payment_status
+    when payment_method = 'pix' and status = 'cancelled' then 'cancelled'::public.payment_status
+    when payment_method = 'pix' then 'approved'::public.payment_status
     else 'pay_on_delivery'::public.payment_status
   end
 where payment_provider is null
@@ -130,7 +132,7 @@ begin
   if old.status = 'pending'
      and new.status = 'confirmed'
      and new.payment_provider = 'direct_pix'
-     and new.payment_status = 'pending' then
+     and new.payment_status <> 'approved' then
     raise exception 'Confirme o recebimento do Pix antes de aceitar o pedido.'
       using errcode = '23514';
   end if;

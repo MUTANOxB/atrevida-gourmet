@@ -7,5 +7,5 @@ export function initialPaymentState(method: SupportedPaymentMethod) {
 }
 
 export function canAcceptOrderPayment(paymentProvider: string, paymentStatus: string) {
-  return paymentProvider !== "direct_pix" || paymentStatus !== "pending";
+  return paymentProvider !== "direct_pix" || paymentStatus === "approved";
 }
