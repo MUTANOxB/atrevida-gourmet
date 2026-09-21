@@ -34,6 +34,7 @@ import {
   createOptionValue,
   createProduct,
   createZone,
+  confirmDirectPix,
   deactivateCategory,
   deactivateOptionGroup,
   deactivateOptionValue,
@@ -107,6 +108,16 @@ export async function adminRoutes(app: FastifyInstance) {
       const { orderId } = orderIdParams.parse(request.params);
       const { status, reason } = updateOrderStatusBody.parse(request.body);
       return updateOrderStatus(actor(request), orderId, status, reason);
+    }
+  );
+
+  app.post(
+    "/api/admin/orders/:orderId/payment/confirm-pix",
+    staffWrite,
+    async (request) => {
+      const { orderId } = orderIdParams.parse(request.params);
+      emptyBody.parse(request.body ?? {});
+      return confirmDirectPix(actor(request), orderId);
     }
   );
 

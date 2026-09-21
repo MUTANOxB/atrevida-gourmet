@@ -6,10 +6,12 @@ import {
   reserveIdempotency
 } from "../../lib/idempotency.js";
 import { createOrderNumber } from "../../lib/order-number.js";
+import { directPixConfigured, generatePixPayload } from "../../lib/pix.js";
 import { publicOrderTrackingDto } from "../../lib/public-dto.js";
 import { supabaseAdmin } from "../../lib/supabase.js";
 import { evaluateStoreSchedule } from "../store/availability.js";
 import type { CreateOrderInput } from "./orders.schemas.js";
+import { initialPaymentState } from "./payment.js";
 import { priceOrderItems, type PricingProduct } from "./pricing.js";
 
 type StoreRow = {
@@ -24,6 +26,9 @@ type StoreRow = {
   timezone: string;
   scheduled_min_lead_minutes: number | null;
   scheduled_max_advance_days: number | null;
+  pix_key: string | null;
+  pix_merchant_name: string | null;
+  pix_merchant_city: string | null;
 };
 
 async function loadStoreSchedule(storeId: string) {
@@ -154,22 +159,38 @@ async function validateStoreAvailability(
   }
 }
 
-function orderResponse(order: any) {
-  return {
+function orderResponse(order: any, store?: StoreRow) {
+  const initial = initialPaymentState(order.payment_method);
+  const response: Record<string, unknown> = {
     orderNumber: order.order_number,
     trackingToken: order.tracking_token,
     status: order.status,
+    paymentMethod: order.payment_method,
+    paymentProvider: order.payment_provider ?? initial.paymentProvider,
+    paymentStatus: order.payment_status ?? initial.paymentStatus,
     subtotalCents: order.subtotal_cents,
     deliveryFeeCents: order.delivery_fee_cents,
     totalCents: order.total_cents,
     createdAt: order.created_at
   };
+  if (order.payment_method === "pix" && store) {
+    response.pix = {
+      copyPaste: generatePixPayload({
+        pixKey: store.pix_key ?? "",
+        merchantName: store.pix_merchant_name ?? "",
+        merchantCity: store.pix_merchant_city ?? "",
+        amountCents: order.total_cents,
+        txid: order.order_number
+      })
+    };
+  }
+  return response;
 }
 
 export async function createOrder(input: CreateOrderInput, idempotencyKey: string) {
   const { data: store, error: storeError } = await supabaseAdmin
     .from("stores")
-    .select("id, active, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, minimum_order_cents, timezone, scheduled_min_lead_minutes, scheduled_max_advance_days")
+    .select("id, active, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, minimum_order_cents, timezone, scheduled_min_lead_minutes, scheduled_max_advance_days, pix_key, pix_merchant_name, pix_merchant_city")
     .eq("slug", input.storeSlug)
     .eq("active", true)
     .maybeSingle();
@@ -197,6 +218,13 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
       .eq("active", true)
       .maybeSingle();
     if (!payment) throw new HttpError(422, "Forma de pagamento indisponível.");
+    if (input.paymentMethod === "pix" && !directPixConfigured({
+      pixKey: store.pix_key,
+      pixMerchantName: store.pix_merchant_name,
+      pixMerchantCity: store.pix_merchant_city
+    })) {
+      throw new HttpError(422, "O Pix ainda não foi configurado pela loja.");
+    }
 
     const productIds = [...new Set(input.items.map((item) => item.productId))];
     const products = await loadPricingProducts(store.id, productIds);
@@ -257,6 +285,8 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
       delivery_zone_id: deliveryZoneId,
       scheduled_for: input.scheduledFor ?? null,
       payment_method: input.paymentMethod,
+      payment_provider: initialPaymentState(input.paymentMethod).paymentProvider,
+      payment_status: initialPaymentState(input.paymentMethod).paymentStatus,
       change_for_cents: input.changeForCents ?? null,
       note: input.note ?? "",
       subtotal_cents: subtotalCents,
@@ -282,7 +312,8 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
     }
     if (!order?.id) throw new HttpError(503, "Não foi possível criar o pedido.");
     orderCreated = true;
-    const body = orderResponse(order);
+    order.payment_method ??= input.paymentMethod;
+    const body = orderResponse(order, store as StoreRow);
     await completeIdempotency(idempotencyKey, store.id, order.id, 201, body);
     return { statusCode: 201, body, replay: false };
   } catch (error) {
@@ -295,7 +326,7 @@ export async function trackOrder(trackingToken: string) {
   const { data, error } = await supabaseAdmin
     .from("orders")
     .select(`
-      order_number, status, fulfillment_type, subtotal_cents,
+      order_number, status, fulfillment_type, payment_method, payment_status,
       delivery_fee_cents, total_cents, created_at, accepted_at,
       ready_at, out_for_delivery_at, completed_at, cancelled_at,
       order_items(product_name_snapshot, unit_price_cents, quantity,

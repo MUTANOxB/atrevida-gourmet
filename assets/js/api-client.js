@@ -160,6 +160,10 @@ export const api = {
     return jsonRequest(`/admin/orders/${encodeURIComponent(orderId)}/status`, "PATCH", { status });
   },
 
+  confirmPix(orderId) {
+    return jsonRequest(`/admin/orders/${encodeURIComponent(orderId)}/payment/confirm-pix`, "POST", {});
+  },
+
   getStoreSettings() {
     return apiFetch("/admin/store");
   },

@@ -234,6 +234,10 @@ select,
   outline: 0;
 }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--rose-strong); box-shadow: 0 0 0 3px rgba(201,126,130,.12); }
+.password-input { position: relative; display: block; }
+.password-input input { width: 100%; padding-right: 3rem; }
+.password-input button { position: absolute; right: .35rem; top: 50%; transform: translateY(-50%); width: 2.25rem; height: 2.25rem; border: 0; border-radius: 9px; background: transparent; color: var(--chocolate); cursor: pointer; font-size: 1rem; }
+.password-input button:hover, .password-input button:focus-visible { background: var(--cream-deep); outline: 2px solid rgba(201,126,130,.25); }
 .field textarea { resize: vertical; }
 .field small { color: var(--muted); font-size: .66rem; line-height: 1.4; }
 .form-grid { display: grid; gap: 12px; }
@@ -260,6 +264,8 @@ select,
 .order-card__customer strong { font-size: .77rem; }
 .order-card__customer span { color: var(--muted); font-size: .66rem; }
 .order-card__meta { display: flex; flex-wrap: wrap; gap: 5px; }
+.order-card__payment { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: .68rem; }
+.order-card__payment strong { color: var(--chocolate-dark); }
 .tag { padding: 4px 6px; border-radius: 99px; color: var(--green); background: rgba(47,74,62,.09); font-size: .58rem; font-weight: 700; }
 .order-card__total span { color: var(--muted); font-size: .66rem; }
 .order-card__total strong { font: 700 .84rem Poppins, sans-serif; }
@@ -316,6 +322,7 @@ dialog::backdrop { background: rgba(31,18,15,.55); backdrop-filter: blur(5px); }
 .hours-row__day strong { font-size: .69rem; }
 .hours-row .field > span { font-size: .58rem; }
 .settings-grid { display: grid; gap: 16px; }
+.pix-settings { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--cream); }
 
 .toast { position: fixed; z-index: 100; right: 14px; bottom: 82px; width: min(calc(100vw - 28px), 360px); padding: 12px 14px; border-radius: 13px; color: white; background: var(--green); box-shadow: var(--shadow); font-size: .74rem; line-height: 1.4; }
 .toast[data-kind="error"] { background: var(--danger); }

@@ -227,6 +227,9 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
     tracking_token: trackingToken,
     status: "pending",
     fulfillment_type: "pickup",
+    payment_method: "pix",
+    payment_provider: "direct_pix",
+    payment_status: "pending",
     subtotal_cents: 1200,
     delivery_fee_cents: 0,
     total_cents: 1200,
@@ -256,6 +259,9 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
           instagram_handle: "@atrevida_gourmet",
           whatsapp_e164: "5514997875460",
           whatsapp_display: "(14) 99787-5460",
+          pix_key: "pix@example.test",
+          pix_merchant_name: "Atrevida Teste",
+          pix_merchant_city: "Marilia",
           categories: [{
             id: categoryId,
             name: "Doces",
@@ -298,7 +304,10 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
           minimum_order_cents: 0,
           timezone: "America/Sao_Paulo",
           scheduled_min_lead_minutes: 0,
-          scheduled_max_advance_days: null
+          scheduled_max_advance_days: null,
+          pix_key: "pix@example.test",
+          pix_merchant_name: "Atrevida Teste",
+          pix_merchant_city: "Marilia"
         });
       }
       return jsonResponse({ id: storeId, setup_complete: true, accepts_delivery: true });
@@ -390,6 +399,8 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
   assert.equal(checkout.statusCode, 201, checkout.body);
   assert.equal(checkout.json().trackingToken, trackingToken);
   assert.equal(checkout.json().totalCents, 1200);
+  assert.equal(checkout.json().paymentStatus, "pending");
+  assert.match(checkout.json().pix.copyPaste, /^00020126/);
 
   storeOpen = false;
   const closedCheckout = await app.inject({
@@ -430,6 +441,9 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
   assert.equal(tracking.statusCode, 200, tracking.body);
   assert.equal(tracking.json().orderNumber, "AG-TEST-001");
   assert.equal(tracking.json().items[0].lineTotalCents, 1200);
+  assert.equal(tracking.json().paymentMethod, "pix");
+  assert.equal(tracking.json().paymentStatus, "pending");
+  assert.equal("pix" in tracking.json(), false);
   assert.equal("customer_phone" in tracking.json(), false);
   assert.ok(calls.includes("POST create_order_with_items"));
   assert.ok(calls.includes("GET orders"));
@@ -567,9 +581,13 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     whatsapp_e164: "+5514997875460",
     whatsapp_display: "(14) 99787-5460",
     scheduled_min_lead_minutes: null,
-    scheduled_max_advance_days: null
+    scheduled_max_advance_days: null,
+    pix_key: "pix@example.test",
+    pix_merchant_name: "Atrevida Teste",
+    pix_merchant_city: "Marilia"
   };
   let orderStatus = "pending";
+  let paymentStatus = "pending";
 
   const orderRow = () => ({
     id: orderId,
@@ -587,6 +605,9 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     delivery_zone_id: null,
     scheduled_for: null,
     payment_method: "pix",
+    payment_provider: "direct_pix",
+    payment_status: paymentStatus,
+    payment_paid_at: paymentStatus === "approved" ? "2026-09-16T10:00:30.000Z" : null,
     change_for_cents: null,
     subtotal_cents: 600,
     delivery_fee_cents: 0,
@@ -682,11 +703,24 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
           url.searchParams.get("id") !== `eq.${orderId}` ||
           url.searchParams.get("store_id") !== `eq.${storeId}`
         ) return jsonResponse(null);
-        return jsonResponse({ id: orderId, status: orderStatus, fulfillment_type: "pickup" });
+        return jsonResponse({
+          id: orderId,
+          status: orderStatus,
+          fulfillment_type: "pickup",
+          payment_provider: "direct_pix",
+          payment_status: paymentStatus
+        });
       }
-      if (method === "GET") return jsonResponse([orderRow()]);
+      if (method === "GET") {
+        if (url.searchParams.has("id")) {
+          if (url.searchParams.get("store_id") !== `eq.${storeId}`) return jsonResponse(null);
+          return jsonResponse(orderRow());
+        }
+        return jsonResponse([orderRow()]);
+      }
       if (method === "PATCH") {
         orderStatus = String(input.status ?? orderStatus);
+        paymentStatus = String(input.payment_status ?? paymentStatus);
         return jsonResponse(orderRow());
       }
     }
@@ -791,12 +825,16 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
           is_open: store.is_open,
           accepts_delivery: store.accepts_delivery,
           accepts_pickup: store.accepts_pickup,
-          accepts_scheduled_orders: store.accepts_scheduled_orders
+          accepts_scheduled_orders: store.accepts_scheduled_orders,
+          pix_key: store.pix_key,
+          pix_merchant_name: store.pix_merchant_name,
+          pix_merchant_city: store.pix_merchant_city
         });
       }
       return jsonResponse(store);
     }
     if (table === "store_payment_methods") {
+      if (select === "active") return jsonResponse({ active: true });
       return jsonResponse([{ method: "pix", label: "Pix", instructions: "", active: true, sort_order: 0 }]);
     }
     return jsonResponse({ message: `Unexpected ${method} ${url.pathname}` }, 500);
@@ -842,6 +880,31 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   assert.equal(orders.statusCode, 200, orders.body);
   assert.equal(orders.json()[0].orderNumber, "AG-ADMIN-001");
 
+  const pendingPixStatus = await app.inject({
+    method: "PATCH",
+    url: `/api/admin/orders/${orderId}/status`,
+    headers: managerHeaders,
+    payload: { status: "confirmed" }
+  });
+  assert.equal(pendingPixStatus.statusCode, 409, pendingPixStatus.body);
+  assert.match(pendingPixStatus.json().error, /Confirme o recebimento do Pix/);
+
+  const confirmedPix = await app.inject({
+    method: "POST",
+    url: `/api/admin/orders/${orderId}/payment/confirm-pix`,
+    headers: managerHeaders,
+    payload: {}
+  });
+  assert.equal(confirmedPix.statusCode, 200, confirmedPix.body);
+  assert.equal(confirmedPix.json().paymentStatus, "approved");
+  const repeatedConfirmation = await app.inject({
+    method: "POST",
+    url: `/api/admin/orders/${orderId}/payment/confirm-pix`,
+    headers: managerHeaders,
+    payload: {}
+  });
+  assert.equal(repeatedConfirmation.statusCode, 200, repeatedConfirmation.body);
+
   const status = await app.inject({
     method: "PATCH",
     url: `/api/admin/orders/${orderId}/status`,
@@ -850,6 +913,16 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   });
   assert.equal(status.statusCode, 200, status.body);
   assert.equal(status.json().status, "confirmed");
+
+  membershipStoreId = "12121212-1212-4212-8212-121212121212";
+  const crossStorePix = await app.inject({
+    method: "POST",
+    url: `/api/admin/orders/${orderId}/payment/confirm-pix`,
+    headers: managerHeaders,
+    payload: {}
+  });
+  assert.equal(crossStorePix.statusCode, 404, crossStorePix.body);
+  membershipStoreId = storeId;
 
   await context.test(
     "bootstrap cria categorias uma vez e não recria a removida pelo administrador",

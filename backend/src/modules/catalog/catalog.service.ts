@@ -9,7 +9,7 @@ export async function getPublicCatalog(storeSlug: string) {
       slug, name, description, logo_url, setup_complete, is_open,
       accepts_delivery, accepts_pickup, accepts_scheduled_orders,
       minimum_order_cents, currency, timezone, instagram_handle,
-      whatsapp_e164, whatsapp_display,
+      whatsapp_e164, whatsapp_display, pix_key, pix_merchant_name, pix_merchant_city,
       categories(
         id, name, slug, sort_order, active,
         products!products_category_same_store_fkey(
@@ -66,7 +66,13 @@ export async function getPublicCatalog(storeSlug: string) {
     minimumOrderCents: store.minimum_order_cents,
     currency: store.currency,
     paymentMethods: (store.store_payment_methods ?? [])
-      .filter((method: any) => method.active)
+      .filter((method: any) => method.active && (
+        method.method !== "pix" || Boolean(
+          store.pix_key?.trim() &&
+          store.pix_merchant_name?.trim() &&
+          store.pix_merchant_city?.trim()
+        )
+      ))
       .sort((left: any, right: any) => left.sort_order - right.sort_order)
       .map((method: any) => ({
         method: method.method,

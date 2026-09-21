@@ -31,6 +31,17 @@ test("migration 007 fixa o search_path de set_updated_at", () => {
   assert.match(migration, /set\s+search_path\s*=\s*public\s*,\s*pg_temp/i);
 });
 
+test("migration de pagamentos é aditiva e protege o aceite de Pix pendente", () => {
+  const file = readdirSync(migrationsRoot).find((name) => name.endsWith("_add_direct_pix_and_payment_status.sql"));
+  assert.ok(file);
+  const migration = readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), "utf8");
+  assert.match(migration, /add column if not exists payment_status/i);
+  assert.match(migration, /add column if not exists payment_provider/i);
+  assert.match(migration, /payment_confirmed_by uuid references auth\.users/i);
+  assert.match(migration, /Confirme o recebimento do Pix antes de aceitar o pedido/i);
+  assert.doesNotMatch(migration, /drop\s+table|truncate\s+table/i);
+});
+
 test("seed comercial mantém somente as categorias confirmadas da Atrevida", () => {
   const seed = readFileSync(seedPath, "utf8");
   const categoryBlock = seed.match(

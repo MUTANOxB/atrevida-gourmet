@@ -34,6 +34,14 @@ const STATUS_LABELS = {
 const STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed", "cancelled"];
 const FULFILLMENT_LABELS = { delivery: "Entrega", pickup: "Retirada", scheduled: "Encomenda" };
 const PAYMENT_LABELS = { pix: "Pix", cash: "Dinheiro", card_on_delivery: "Cartão no recebimento" };
+const PAYMENT_STATUS_LABELS = {
+  pending: "Aguardando pagamento",
+  pay_on_delivery: "Pagamento no recebimento",
+  approved: "Pagamento confirmado",
+  rejected: "Pagamento recusado",
+  cancelled: "Pagamento cancelado",
+  refunded: "Pagamento estornado"
+};
 const PAYMENT_METHODS = [
   { method: "pix", label: "Pix", instructions: "", active: true, sortOrder: 0 },
   { method: "cash", label: "Dinheiro", instructions: "", active: true, sortOrder: 1 },
@@ -167,6 +175,15 @@ function normalizeSession(payload) {
 
 async function initLogin() {
   const form = $("#loginForm");
+  const password = form.elements.password;
+  const passwordToggle = $("#passwordToggle");
+  passwordToggle.addEventListener("click", () => {
+    const visible = password.type === "text";
+    password.type = visible ? "password" : "text";
+    const label = visible ? "Mostrar senha" : "Ocultar senha";
+    passwordToggle.setAttribute("aria-label", label);
+    passwordToggle.title = label;
+  });
   try {
     const session = normalizeSession(await api.getSession());
     if (session.authenticated) {
@@ -262,6 +279,8 @@ function normalizeOrder(order) {
     customerName: order.customerName || order.customer_name || customer.name || "Cliente",
     customerPhone: order.customerPhone || order.customer_phone || customer.phone || "",
     paymentMethod: order.paymentMethod || order.payment_method || "",
+    paymentProvider: order.paymentProvider || order.payment_provider || "offline",
+    paymentStatus: order.paymentStatus || order.payment_status || "pay_on_delivery",
     changeForCents: order.changeForCents ?? order.change_for_cents ?? null,
     subtotalCents: Number(order.subtotalCents ?? order.subtotal_cents ?? 0),
     deliveryFeeCents: Number(order.deliveryFeeCents ?? order.delivery_fee_cents ?? 0),
@@ -301,6 +320,7 @@ function filteredOrders() {
 function primaryOrderAction(order) {
   const fulfillment = order.fulfillmentType;
   if (order.status === "pending") {
+    if (order.paymentProvider === "direct_pix" && order.paymentStatus === "pending") return null;
     return { status: "confirmed", label: fulfillment === "scheduled" ? "Aceitar encomenda" : "Aceitar pedido" };
   }
   if (["confirmed", "preparing"].includes(order.status)) {
@@ -322,10 +342,13 @@ function renderOrderCard(order) {
   const scheduled = order.scheduledFor ? `<span class="tag">📅 ${escapeHtml(dateTime(order.scheduledFor))}</span>` : "";
   const active = !["completed", "cancelled"].includes(order.status);
   const actions = [
+    order.paymentProvider === "direct_pix" && order.paymentStatus === "pending"
+      ? `<button class="btn btn--primary" type="button" data-confirm-pix="${escapeHtml(order.id)}">Confirmar Pix recebido</button>`
+      : "",
     primaryAction ? `<button class="btn btn--primary" type="button" data-order-status="${primaryAction.status}" data-order-id="${escapeHtml(order.id)}">${escapeHtml(primaryAction.label)}</button>` : "",
     active ? `<button class="btn btn--danger" type="button" data-order-status="cancelled" data-order-id="${escapeHtml(order.id)}">Cancelar pedido</button>` : ""
   ].filter(Boolean).join("");
-  return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">Pedido #${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
+  return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">Pedido #${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div><div class="order-card__payment"><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong><span>${escapeHtml(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</span></div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
 }
 
 function renderOrders() {
@@ -409,6 +432,19 @@ async function updateOrderStatus(orderId, status, button) {
   }
 }
 
+async function confirmPix(orderId, button) {
+  setBusy(button, true, "Confirmando…");
+  try {
+    await api.confirmPix(orderId);
+    toast("Pix confirmado.");
+    await loadOrders({ quiet: true });
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 function optionNames(options) {
   if (!Array.isArray(options)) return "";
   return options.map((option) => option.valueName || option.value_name || option.name || "").filter(Boolean).join(" · ");
@@ -420,7 +456,7 @@ function openOrderDetails(orderId) {
   state.newOrderIds.delete(orderId);
   const address = [order.delivery.street, order.delivery.number, order.delivery.neighborhood, order.delivery.complement].filter(Boolean).join(", ");
   $("#orderDialogTitle").textContent = `Pedido #${order.orderNumber}`;
-  $("#orderDetails").innerHTML = `<section class="dialog-section"><div class="detail-grid"><div class="detail"><small>Status</small><strong>${escapeHtml(STATUS_LABELS[order.status] || order.status)}</strong></div><div class="detail"><small>Recebimento</small><strong>${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</strong></div><div class="detail"><small>Cliente</small><strong>${escapeHtml(order.customerName)}</strong></div><div class="detail"><small>Telefone</small><span>${escapeHtml(order.customerPhone)}</span></div>${order.scheduledFor ? `<div class="detail"><small>Agendado para</small><strong>${escapeHtml(dateTime(order.scheduledFor))}</strong></div>` : ""}<div class="detail"><small>Pagamento</small><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong></div></div></section>${address ? `<section class="dialog-section"><h3>Entrega</h3><div class="detail"><span>${escapeHtml(address)}</span>${order.delivery.postalCode ? `<small>CEP ${escapeHtml(order.delivery.postalCode)}</small>` : ""}${order.delivery.reference ? `<small>Referência: ${escapeHtml(order.delivery.reference)}</small>` : ""}</div></section>` : ""}<section class="dialog-section"><h3>Itens</h3><ul class="item-list">${order.items.map((item) => `<li><span><strong>${item.quantity}× ${escapeHtml(item.name)}</strong>${optionNames(item.options) ? `<br><small>${escapeHtml(optionNames(item.options))}</small>` : ""}${item.note ? `<br><small>Obs.: ${escapeHtml(item.note)}</small>` : ""}</span><strong>${money(item.lineTotalCents)}</strong></li>`).join("")}</ul></section>${order.note ? `<section class="dialog-section"><h3>Observação</h3><div class="detail"><span>${escapeHtml(order.note)}</span></div></section>` : ""}<section class="dialog-section"><div class="detail-grid"><div class="detail"><small>Subtotal</small><strong>${money(order.subtotalCents)}</strong></div><div class="detail"><small>Entrega</small><strong>${money(order.deliveryFeeCents)}</strong></div><div class="detail"><small>Total</small><strong>${money(order.totalCents)}</strong></div>${order.changeForCents !== null ? `<div class="detail"><small>Troco para</small><strong>${money(order.changeForCents)}</strong></div>` : ""}</div></section>`;
+  $("#orderDetails").innerHTML = `<section class="dialog-section"><div class="detail-grid"><div class="detail"><small>Status do pedido</small><strong>${escapeHtml(STATUS_LABELS[order.status] || order.status)}</strong></div><div class="detail"><small>Recebimento</small><strong>${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</strong></div><div class="detail"><small>Cliente</small><strong>${escapeHtml(order.customerName)}</strong></div><div class="detail"><small>Telefone</small><span>${escapeHtml(order.customerPhone)}</span></div>${order.scheduledFor ? `<div class="detail"><small>Agendado para</small><strong>${escapeHtml(dateTime(order.scheduledFor))}</strong></div>` : ""}<div class="detail"><small>Forma de pagamento</small><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong></div><div class="detail"><small>Status do pagamento</small><strong>${escapeHtml(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</strong></div></div></section>${address ? `<section class="dialog-section"><h3>Entrega</h3><div class="detail"><span>${escapeHtml(address)}</span>${order.delivery.postalCode ? `<small>CEP ${escapeHtml(order.delivery.postalCode)}</small>` : ""}${order.delivery.reference ? `<small>Referência: ${escapeHtml(order.delivery.reference)}</small>` : ""}</div></section>` : ""}<section class="dialog-section"><h3>Itens</h3><ul class="item-list">${order.items.map((item) => `<li><span><strong>${item.quantity}× ${escapeHtml(item.name)}</strong>${optionNames(item.options) ? `<br><small>${escapeHtml(optionNames(item.options))}</small>` : ""}${item.note ? `<br><small>Obs.: ${escapeHtml(item.note)}</small>` : ""}</span><strong>${money(item.lineTotalCents)}</strong></li>`).join("")}</ul></section>${order.note ? `<section class="dialog-section"><h3>Observação</h3><div class="detail"><span>${escapeHtml(order.note)}</span></div></section>` : ""}<section class="dialog-section"><div class="detail-grid"><div class="detail"><small>Subtotal</small><strong>${money(order.subtotalCents)}</strong></div><div class="detail"><small>Entrega</small><strong>${money(order.deliveryFeeCents)}</strong></div><div class="detail"><small>Total</small><strong>${money(order.totalCents)}</strong></div>${order.changeForCents !== null ? `<div class="detail"><small>Troco para</small><strong>${money(order.changeForCents)}</strong></div>` : ""}</div></section>`;
   showDialog("orderDialog");
   renderOrders();
 }
@@ -444,8 +480,10 @@ async function initOrders() {
   $("#ordersKanban").addEventListener("click", (event) => {
     const retry = event.target.closest("[data-retry-orders]");
     const statusButton = event.target.closest("[data-order-status]");
+    const pixButton = event.target.closest("[data-confirm-pix]");
     const details = event.target.closest("[data-order-details]");
     if (retry) loadOrders({ initial: true });
+    else if (pixButton) confirmPix(pixButton.dataset.confirmPix, pixButton);
     else if (statusButton) updateOrderStatus(statusButton.dataset.orderId, statusButton.dataset.orderStatus, statusButton);
     else if (details) openOrderDetails(details.dataset.orderDetails);
   });
@@ -849,6 +887,9 @@ function normalizeStore(payload) {
     whatsappDisplay: item.whatsappDisplay || item.whatsapp_display || "",
     scheduledMinLeadMinutes: item.scheduledMinLeadMinutes ?? item.scheduled_min_lead_minutes ?? null,
     scheduledMaxAdvanceDays: item.scheduledMaxAdvanceDays ?? item.scheduled_max_advance_days ?? null,
+    pixKey: item.pixKey || item.pix_key || "",
+    pixMerchantName: item.pixMerchantName || item.pix_merchant_name || "",
+    pixMerchantCity: item.pixMerchantCity || item.pix_merchant_city || "",
     paymentMethods: rawPayments
       .filter((method) => typeof method === "string" || method?.active !== false)
       .map((method) => typeof method === "string" ? method : method.method || method.code || method.id || method.value)
@@ -875,8 +916,18 @@ async function loadStoreSettings() {
     form.elements.whatsappDisplay.value = store.whatsappDisplay;
     form.elements.scheduledMinLeadMinutes.value = store.scheduledMinLeadMinutes ?? "";
     form.elements.scheduledMaxAdvanceDays.value = store.scheduledMaxAdvanceDays ?? "";
+    form.elements.pixKey.value = store.pixKey;
+    form.elements.pixMerchantName.value = store.pixMerchantName;
+    form.elements.pixMerchantCity.value = store.pixMerchantCity;
     $$("#paymentMethods input").forEach((input) => { input.checked = store.paymentMethods.includes(input.value); });
+    syncPixSettingsVisibility();
   } catch (error) { setError("storeError", error.message); }
+}
+
+function syncPixSettingsVisibility() {
+  const enabled = Boolean($("#paymentMethods input[value='pix']")?.checked);
+  $("#pixSettings").hidden = !enabled;
+  $$("#pixSettings input").forEach((input) => { input.required = enabled; });
 }
 
 async function saveStoreSettings(event) {
@@ -899,6 +950,13 @@ async function saveStoreSettings(event) {
     const paymentMethods = $$("#paymentMethods input:checked").map((input) => ({
       ...PAYMENT_METHODS.find((method) => method.method === input.value)
     })).filter((method) => method.method);
+    const pixEnabled = paymentMethods.some((method) => method.method === "pix");
+    const pixKey = form.elements.pixKey.value.trim();
+    const pixMerchantName = form.elements.pixMerchantName.value.trim();
+    const pixMerchantCity = form.elements.pixMerchantCity.value.trim();
+    if (pixEnabled && (!pixKey || !pixMerchantName || !pixMerchantCity)) {
+      throw new Error("Preencha a chave Pix, o nome e a cidade do recebedor.");
+    }
     await api.updateStoreSettings({
       name: form.elements.name.value.trim(), description: form.elements.description.value.trim(), timezone: form.elements.timezone.value.trim(),
       logoUrl: form.elements.logoUrl.value.trim() || null,
@@ -911,6 +969,9 @@ async function saveStoreSettings(event) {
       whatsappDisplay: form.elements.whatsappDisplay.value.trim() || null,
       scheduledMinLeadMinutes,
       scheduledMaxAdvanceDays,
+      pixKey: pixKey || null,
+      pixMerchantName: pixMerchantName || null,
+      pixMerchantCity: pixMerchantCity || null,
       paymentMethods
     });
     toast("Configurações salvas.");
@@ -1010,6 +1071,7 @@ async function saveException(event) {
 
 async function initSettings() {
   $("#storeForm").addEventListener("submit", saveStoreSettings);
+  $("#paymentMethods input[value='pix']").addEventListener("change", syncPixSettingsVisibility);
   $("#hoursForm").addEventListener("submit", saveHours);
   $("#hoursGrid").addEventListener("change", (event) => {
     if (!event.target.matches("[data-hour-closed]")) return;

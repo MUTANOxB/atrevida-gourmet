@@ -1,5 +1,7 @@
 import { HttpError } from "../../lib/errors.js";
+import { directPixConfigured } from "../../lib/pix.js";
 import { supabaseAdmin } from "../../lib/supabase.js";
+import { canAcceptOrderPayment } from "../orders/payment.js";
 import type { OrderStatus } from "./admin.schemas.js";
 import {
   assertManagedProductImage,
@@ -118,6 +120,9 @@ function adminOrderDto(row: any) {
       zoneId: row.delivery_zone_id
     } : null,
     paymentMethod: row.payment_method,
+    paymentProvider: row.payment_provider,
+    paymentStatus: row.payment_status,
+    paymentPaidAt: row.payment_paid_at,
     changeForCents: row.change_for_cents,
     subtotalCents: row.subtotal_cents,
     deliveryFeeCents: row.delivery_fee_cents,
@@ -147,7 +152,8 @@ const orderSelect = `
   id, order_number, status, fulfillment_type, customer_name, customer_phone,
   delivery_postal_code, delivery_street, delivery_number, delivery_neighborhood,
   delivery_complement, delivery_reference, delivery_zone_id, scheduled_for,
-  payment_method, change_for_cents, subtotal_cents, delivery_fee_cents,
+  payment_method, payment_provider, payment_status, payment_paid_at,
+  change_for_cents, subtotal_cents, delivery_fee_cents,
   total_cents, note, created_at, accepted_at, preparing_at, ready_at,
   out_for_delivery_at, completed_at, cancelled_at,
   order_items(id, product_name_snapshot, unit_price_cents, quantity,
@@ -218,7 +224,7 @@ export async function updateOrderStatus(
 ) {
   const { data: current, error: currentError } = await supabaseAdmin
     .from("orders")
-    .select("id, status, fulfillment_type")
+    .select("id, status, fulfillment_type, payment_provider, payment_status")
     .eq("id", orderId)
     .eq("store_id", actor.storeId)
     .maybeSingle();
@@ -226,6 +232,13 @@ export async function updateOrderStatus(
   if (!current) throw new HttpError(404, "Pedido não encontrado.");
   if (!canTransitionOrder(current.status, status, current.fulfillment_type)) {
     throw new HttpError(409, "Transição de status não permitida.");
+  }
+  if (
+    current.status === "pending" &&
+    status === "confirmed" &&
+    !canAcceptOrderPayment(current.payment_provider, current.payment_status)
+  ) {
+    throw new HttpError(409, "Confirme o recebimento do Pix antes de aceitar o pedido.");
   }
 
   const now = new Date().toISOString();
@@ -255,6 +268,47 @@ export async function updateOrderStatus(
     toStatus: status,
     reason: reason || undefined
   });
+  return adminOrderDto(data);
+}
+
+export async function confirmDirectPix(actor: Actor, orderId: string) {
+  const { data: current, error: currentError } = await supabaseAdmin
+    .from("orders")
+    .select(orderSelect)
+    .eq("id", orderId)
+    .eq("store_id", actor.storeId)
+    .maybeSingle();
+  if (currentError) databaseFailure("Falha ao validar o pagamento.");
+  if (!current) throw new HttpError(404, "Pedido não encontrado.");
+  if (current.payment_provider !== "direct_pix") {
+    throw new HttpError(409, "Este pedido não usa Pix direto.");
+  }
+  if (current.payment_status === "approved") return adminOrderDto(current);
+  if (current.payment_status !== "pending") {
+    throw new HttpError(409, "Este pagamento não pode ser confirmado.");
+  }
+
+  const paidAt = new Date().toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("orders")
+    .update({
+      payment_status: "approved",
+      payment_paid_at: paidAt,
+      payment_confirmed_by: actor.userId
+    })
+    .eq("id", orderId)
+    .eq("store_id", actor.storeId)
+    .eq("payment_provider", "direct_pix")
+    .eq("payment_status", "pending")
+    .select(orderSelect)
+    .maybeSingle();
+  if (error) databaseFailure("Falha ao confirmar o Pix.");
+  if (!data) {
+    const concurrent = await getAdminOrder(actor.storeId, orderId);
+    if (concurrent?.paymentStatus === "approved") return concurrent;
+    throw new HttpError(409, "O pagamento foi atualizado por outro usuário.");
+  }
+  await audit(actor, "order.pix_confirmed", "order", orderId, { paidAt });
   return adminOrderDto(data);
 }
 
@@ -562,7 +616,7 @@ export async function deactivateZone(actor: Actor, id: string) {
 
 export async function getStoreSettings(storeId: string) {
   const [storeResult, paymentsResult] = await Promise.all([
-    supabaseAdmin.from("stores").select("id, slug, name, description, logo_url, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, minimum_order_cents, timezone, instagram_handle, whatsapp_e164, whatsapp_display, scheduled_min_lead_minutes, scheduled_max_advance_days").eq("id", storeId).single(),
+    supabaseAdmin.from("stores").select("id, slug, name, description, logo_url, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, minimum_order_cents, timezone, instagram_handle, whatsapp_e164, whatsapp_display, scheduled_min_lead_minutes, scheduled_max_advance_days, pix_key, pix_merchant_name, pix_merchant_city").eq("id", storeId).single(),
     supabaseAdmin.from("store_payment_methods").select("method, label, instructions, active, sort_order").eq("store_id", storeId).order("sort_order")
   ]);
   if (storeResult.error || paymentsResult.error) databaseFailure("Falha ao carregar configurações.");
@@ -577,6 +631,9 @@ export async function getStoreSettings(storeId: string) {
     whatsappDisplay: row.whatsapp_display,
     scheduledMinLeadMinutes: row.scheduled_min_lead_minutes,
     scheduledMaxAdvanceDays: row.scheduled_max_advance_days,
+    pixKey: row.pix_key,
+    pixMerchantName: row.pix_merchant_name,
+    pixMerchantCity: row.pix_merchant_city,
     paymentMethods: (paymentsResult.data ?? []).map((method) => ({
       code: method.method, method: method.method, label: method.label,
       instructions: method.instructions,
@@ -625,11 +682,31 @@ export async function updateStoreSettings(actor: Actor, input: any) {
     try { new Intl.DateTimeFormat("pt-BR", { timeZone: input.timezone }).format(); }
     catch { throw new HttpError(422, "Fuso horário inválido."); }
   }
+  const [currentResult, pixMethodResult] = await Promise.all([
+    supabaseAdmin.from("stores")
+      .select("setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, pix_key, pix_merchant_name, pix_merchant_city")
+      .eq("id", actor.storeId).single(),
+    supabaseAdmin.from("store_payment_methods")
+      .select("active").eq("store_id", actor.storeId).eq("method", "pix").maybeSingle()
+  ]);
+  if (currentResult.error || pixMethodResult.error) databaseFailure("Falha ao validar configurações.");
+  const current = currentResult.data;
+  const pixWillBeActive = input.paymentMethods
+    ? input.paymentMethods.some((method: any) => method.method === "pix" && method.active)
+    : pixMethodResult.data?.active === true;
+  const pixConfiguration = {
+    key: input.pixKey !== undefined ? input.pixKey : current.pix_key,
+    name: input.pixMerchantName !== undefined ? input.pixMerchantName : current.pix_merchant_name,
+    city: input.pixMerchantCity !== undefined ? input.pixMerchantCity : current.pix_merchant_city
+  };
+  if (pixWillBeActive && !directPixConfigured({
+    pixKey: pixConfiguration.key,
+    pixMerchantName: pixConfiguration.name,
+    pixMerchantCity: pixConfiguration.city
+  })) {
+    throw new HttpError(422, "Preencha a chave Pix, o nome e a cidade do recebedor antes de ativar o Pix.");
+  }
   if (input.paymentMethods) await replacePaymentMethods(actor, input.paymentMethods);
-  const { data: current, error: currentError } = await supabaseAdmin.from("stores")
-    .select("setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders")
-    .eq("id", actor.storeId).single();
-  if (currentError) databaseFailure("Falha ao validar configurações.");
   const prospective = {
     accepts_delivery: input.acceptsDelivery ?? current.accepts_delivery,
     accepts_pickup: input.acceptsPickup ?? current.accepts_pickup,
@@ -644,7 +721,9 @@ export async function updateStoreSettings(actor: Actor, input: any) {
     timezone: "timezone", instagram: "instagram_handle", whatsappE164: "whatsapp_e164",
     whatsappDisplay: "whatsapp_display", setupComplete: "setup_complete",
     scheduledMinLeadMinutes: "scheduled_min_lead_minutes",
-    scheduledMaxAdvanceDays: "scheduled_max_advance_days"
+    scheduledMaxAdvanceDays: "scheduled_max_advance_days",
+    pixKey: "pix_key", pixMerchantName: "pix_merchant_name",
+    pixMerchantCity: "pix_merchant_city"
   };
   const patch: any = {};
   for (const [key, column] of Object.entries(mapping)) if (input[key] !== undefined) patch[column] = input[key];

@@ -145,6 +145,9 @@ export const updateStoreBody = z.object({
   whatsappDisplay: z.string().trim().max(30).nullable().optional(),
   scheduledMinLeadMinutes: z.number().int().min(0).max(525_600).nullable().optional(),
   scheduledMaxAdvanceDays: z.number().int().min(1).max(3_650).nullable().optional(),
+  pixKey: z.string().trim().min(1).max(77).nullable().optional(),
+  pixMerchantName: z.string().trim().min(1).max(25).nullable().optional(),
+  pixMerchantCity: z.string().trim().min(1).max(15).nullable().optional(),
   setupComplete: z.boolean().optional(),
   paymentMethods: z.array(paymentMethodInput).max(3).optional()
 }).strict().refine((value) => Object.keys(value).length > 0, "Informe ao menos um campo.")

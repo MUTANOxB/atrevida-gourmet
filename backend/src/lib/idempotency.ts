@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { HttpError } from "./errors.js";
+import { generatePixPayload } from "./pix.js";
 import { supabaseAdmin } from "./supabase.js";
 
 function stableValue(value: unknown): unknown {
@@ -117,7 +118,7 @@ async function recoverOrderResponse(
 ): Promise<IdempotencyReservation | null> {
   const { data } = await supabaseAdmin
     .from("orders")
-    .select("id, order_number, tracking_token, status, subtotal_cents, delivery_fee_cents, total_cents, created_at")
+    .select("id, store_id, order_number, tracking_token, status, payment_method, payment_provider, payment_status, subtotal_cents, delivery_fee_cents, total_cents, created_at")
     .eq("id", orderId)
     .eq("store_id", storeId)
     .maybeSingle();
@@ -126,11 +127,31 @@ async function recoverOrderResponse(
     orderNumber: data.order_number,
     trackingToken: data.tracking_token,
     status: data.status,
+    paymentMethod: data.payment_method,
+    paymentProvider: data.payment_provider,
+    paymentStatus: data.payment_status,
     subtotalCents: data.subtotal_cents,
     deliveryFeeCents: data.delivery_fee_cents,
     totalCents: data.total_cents,
     createdAt: data.created_at
-  };
+  } as Record<string, unknown>;
+  if (data.payment_method === "pix") {
+    const { data: store } = await supabaseAdmin
+      .from("stores")
+      .select("pix_key, pix_merchant_name, pix_merchant_city")
+      .eq("id", data.store_id)
+      .maybeSingle();
+    if (!store) return null;
+    body.pix = {
+      copyPaste: generatePixPayload({
+        pixKey: store.pix_key ?? "",
+        merchantName: store.pix_merchant_name ?? "",
+        merchantCity: store.pix_merchant_city ?? "",
+        amountCents: data.total_cents,
+        txid: data.order_number
+      })
+    };
+  }
   await supabaseAdmin.from("idempotency_keys").update({
     response_status: 201,
     response_body: body,

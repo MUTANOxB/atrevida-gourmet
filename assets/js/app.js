@@ -12,6 +12,14 @@ const PAYMENT_LABELS = {
   cash: "Dinheiro",
   card_on_delivery: "Cartão no recebimento"
 };
+const PAYMENT_STATUS_LABELS = {
+  pending: "Aguardando pagamento",
+  pay_on_delivery: "Pagamento no recebimento",
+  approved: "Pagamento confirmado",
+  rejected: "Pagamento recusado",
+  cancelled: "Pagamento cancelado",
+  refunded: "Pagamento estornado"
+};
 const STATUS_LABELS = {
   pending: "Pedido recebido / aguardando confirmação",
   confirmed: "Pedido confirmado",
@@ -100,6 +108,10 @@ const els = {
   successModal: $("#successModal"),
   successOrderId: $("#successOrderId"),
   successOrderStatus: $("#successOrderStatus"),
+  successOrderTotal: $("#successOrderTotal"),
+  successPix: $("#successPix"),
+  pixCopyPaste: $("#pixCopyPaste"),
+  copyPixBtn: $("#copyPixBtn"),
   successCloseBtn: $("#successCloseBtn"),
   viewOrdersBtn: $("#viewOrdersBtn"),
   ordersDrawer: $("#ordersDrawer"),
@@ -738,7 +750,15 @@ async function submitCheckout(event) {
     renderCart();
     closeDialog(els.checkoutModal);
     els.successOrderId.textContent = `Pedido #${order.orderNumber}`;
-    els.successOrderStatus.textContent = STATUS_LABELS[order.status] || "Pedido recebido / aguardando confirmação";
+    els.successOrderTotal.textContent = money(order.totalCents);
+    const pixCode = String(order.pix?.copyPaste || "");
+    els.successPix.hidden = !pixCode;
+    els.pixCopyPaste.value = pixCode;
+    els.successOrderStatus.textContent = order.paymentStatus === "pending"
+      ? "Aguardando pagamento"
+      : order.paymentStatus === "pay_on_delivery"
+        ? "Pagamento no recebimento"
+        : STATUS_LABELS[order.status] || "Pedido recebido / aguardando confirmação";
     showDialog(els.successModal);
     els.checkoutForm.reset();
     state.quote = null;
@@ -757,6 +777,8 @@ function normalizeTracking(payload) {
     orderNumber: payload.orderNumber || payload.order_number || "Pedido",
     status: payload.status || "pending",
     fulfillmentType: payload.fulfillmentType || payload.fulfillment_type || "",
+    paymentMethod: payload.paymentMethod || payload.payment_method || "",
+    paymentStatus: payload.paymentStatus || payload.payment_status || "",
     totalCents: Number(payload.totalCents ?? payload.total_cents ?? 0)
   };
 }
@@ -787,7 +809,7 @@ function renderTrackedOrders() {
     const order = entry.last ? normalizeTracking(entry.last) : null;
     if (entry.error) return `<article class="order-track-card"><div class="order-track-card__top"><strong>Pedido #${escapeHtml(entry.orderNumber || "—")}</strong><span class="order-status">Indisponível</span></div><p>${escapeHtml(entry.error)}</p></article>`;
     if (!order) return `<article class="order-track-card skeleton-order" aria-label="Carregando pedido"><span class="skeleton skeleton--title"></span><span class="skeleton skeleton--text"></span></article>`;
-    return `<article class="order-track-card"><div class="order-track-card__top"><strong>Pedido #${escapeHtml(order.orderNumber)}</strong><span class="order-status status--${escapeHtml(order.status)}">${escapeHtml(STATUS_LABELS[order.status] || "Status atualizado")}</span></div><p>${escapeHtml(orderStatusMessage(order))}</p><div class="order-track-card__bottom"><span>Total</span><strong>${money(order.totalCents)}</strong></div></article>`;
+    return `<article class="order-track-card"><div class="order-track-card__top"><strong>Pedido #${escapeHtml(order.orderNumber)}</strong><span class="order-status status--${escapeHtml(order.status)}">${escapeHtml(STATUS_LABELS[order.status] || "Status atualizado")}</span></div><p>${escapeHtml(orderStatusMessage(order))}</p><p><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong> · ${escapeHtml(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</p><div class="order-track-card__bottom"><span>Total</span><strong>${money(order.totalCents)}</strong></div></article>`;
   }).join("");
 }
 
@@ -926,6 +948,16 @@ function wireEvents() {
   els.ordersClose.addEventListener("click", () => { closeDialog(els.ordersDrawer); stopTrackingUpdates(); });
   els.ordersDrawer.addEventListener("close", stopTrackingUpdates);
   els.viewOrdersBtn.addEventListener("click", () => { closeDialog(els.successModal); openOrders(); });
+  els.copyPixBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(els.pixCopyPaste.value);
+      toast("Código Pix copiado.");
+    } catch {
+      els.pixCopyPaste.select();
+      document.execCommand("copy");
+      toast("Código Pix copiado.");
+    }
+  });
   els.successCloseBtn.addEventListener("click", () => { closeDialog(els.successModal); document.querySelector("#cardapio").scrollIntoView({ behavior: "smooth" }); });
   els.showOrdersCategory.addEventListener("click", () => {
     const category = state.catalog?.categories.find((item) => normalizeText(`${item.name} ${item.slug}`).includes("encomenda"));

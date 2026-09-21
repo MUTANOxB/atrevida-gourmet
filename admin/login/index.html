@@ -18,11 +18,10 @@
       <div><span class="eyebrow">ÁREA DA LOJA</span><h1>Que bom ter você aqui.</h1><p>Entre com sua conta individual para gerenciar pedidos e o cardápio.</p></div>
       <form id="loginForm" class="form-grid" method="post" action="/api/admin/auth/login" novalidate>
         <label class="field field--wide"><span>E-mail</span><input type="email" name="email" autocomplete="username" required maxlength="254" /></label>
-        <label class="field field--wide"><span>Senha</span><input type="password" name="password" autocomplete="current-password" required minlength="8" maxlength="200" /></label>
+        <label class="field field--wide"><span>Senha</span><span class="password-input"><input type="password" name="password" autocomplete="current-password" required minlength="8" maxlength="200" /><button type="button" id="passwordToggle" aria-label="Mostrar senha" title="Mostrar senha">👁</button></span></label>
         <p class="form-error field--wide" id="loginError" role="alert" hidden></p>
         <button class="btn btn--primary btn--full field--wide" type="submit" id="loginButton">Entrar</button>
       </form>
-      <div class="login-security"><span aria-hidden="true">🔒</span><span>A sessão usa cookie seguro. A senha e o token administrativo não são armazenados no navegador.</span></div>
       <a class="login-back" href="/">← Voltar ao cardápio</a>
     </section>
   </main>

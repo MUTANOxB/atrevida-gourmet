@@ -40,6 +40,8 @@ export function publicOrderTrackingDto(order: any) {
   return {
     orderNumber: order.order_number,
     status: order.status,
+    paymentMethod: order.payment_method,
+    paymentStatus: order.payment_status,
     fulfillmentType: order.fulfillment_type,
     subtotalCents: order.subtotal_cents,
     deliveryFeeCents: order.delivery_fee_cents,

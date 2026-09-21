@@ -141,7 +141,7 @@
     </dialog>
 
     <dialog class="modal" id="successModal" aria-labelledby="successTitle">
-      <div class="modal__panel success-panel"><div class="success-icon" aria-hidden="true">✓</div><span class="eyebrow">PEDIDO RECEBIDO</span><h3 id="successTitle">Pedido enviado com sucesso!</h3><p>A loja recebeu seu pedido e fará a confirmação.</p><div class="order-confirmation"><span>Número do pedido</span><strong id="successOrderId"></strong><small id="successOrderStatus">Pedido recebido / aguardando confirmação</small></div><button class="btn btn--primary btn--full" type="button" id="viewOrdersBtn">Ver pedido</button><button class="btn btn--ghost btn--full" type="button" id="successCloseBtn">Voltar ao cardápio</button></div>
+      <div class="modal__panel success-panel"><div class="success-icon" aria-hidden="true">✓</div><span class="eyebrow">PEDIDO RECEBIDO</span><h3 id="successTitle">Pedido enviado com sucesso!</h3><p>A loja recebeu seu pedido.</p><div class="order-confirmation"><span>Número do pedido</span><strong id="successOrderId"></strong><span>Valor exato</span><strong id="successOrderTotal"></strong><small id="successOrderStatus">Pedido recebido / aguardando confirmação</small></div><div class="pix-payment" id="successPix" hidden><label for="pixCopyPaste">Pix Copia e Cola</label><textarea id="pixCopyPaste" readonly rows="4"></textarea><button class="btn btn--primary btn--full" type="button" id="copyPixBtn">Copiar código Pix</button></div><button class="btn btn--primary btn--full" type="button" id="viewOrdersBtn">Ver pedido</button><button class="btn btn--ghost btn--full" type="button" id="successCloseBtn">Voltar ao cardápio</button></div>
     </dialog>
 
     <dialog class="drawer" id="ordersDrawer" aria-labelledby="ordersTitle">

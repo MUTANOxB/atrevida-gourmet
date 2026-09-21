@@ -90,6 +90,12 @@ if (!/\baction=["']\/api\/admin\/auth\/login["']/i.test(loginForm)) {
 if (/\bformmethod=["']get["']/i.test(loginHtml)) {
   fail("O login não pode permitir envio de credenciais por query string.");
 }
+if (/A sessão usa cookie seguro|token administrativo não são armazenados/i.test(loginHtml)) {
+  fail("O banner técnico não deve aparecer na tela de login.");
+}
+if (!/id=["']passwordToggle["'][^>]*aria-label=["']Mostrar senha["']/i.test(loginHtml)) {
+  fail("O login deve ter botão próprio para mostrar a senha.");
+}
 
 const apiClient = fs.readFileSync(path.join(root, "assets", "js", "api-client.js"), "utf8");
 if (!/const API_BASE\s*=\s*["']\/api["']/.test(apiClient)) fail("O cliente HTTP deve usar apenas a base /api.");
@@ -139,6 +145,15 @@ if (!adminApp.includes("uploadProductImage") || !apiClient.includes("/admin/uplo
 }
 if (!adminApp.includes("selection.removeAllRanges()")) {
   fail("O painel deve limpar seleções acidentais fora de conteúdo copiável.");
+}
+if (
+  !adminApp.includes('password.type = visible ? "password" : "text"') ||
+  !adminApp.includes('visible ? "Mostrar senha" : "Ocultar senha"')
+) {
+  fail("O botão de senha deve alternar tipo e rótulo acessível sem recriar o campo.");
+}
+if (!adminApp.includes("Confirmar Pix recebido") || !apiClient.includes("/payment/confirm-pix")) {
+  fail("O painel deve confirmar Pix exclusivamente pela rota administrativa.");
 }
 
 const adminCss = fs.readFileSync(path.join(root, "assets", "css", "admin.css"), "utf8");

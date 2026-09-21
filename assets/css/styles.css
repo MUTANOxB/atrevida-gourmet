@@ -1135,6 +1135,9 @@ button:disabled {
 .order-confirmation { display:grid; gap:5px; padding:16px; border:1px solid var(--line); border-radius:18px; background:white; }
 .order-confirmation span, .order-confirmation small { color:var(--muted); font-size:.75rem; }
 .order-confirmation strong { color:var(--chocolate); font:700 1.5rem Poppins,sans-serif; }
+.pix-payment { display:grid; gap:9px; text-align:left; }
+.pix-payment label { font-weight:700; font-size:.8rem; }
+.pix-payment textarea { width:100%; resize:none; padding:12px; border:1px solid var(--line); border-radius:12px; background:white; color:var(--chocolate-dark); font:600 .72rem/1.45 monospace; }
 
 .orders-list { display:grid; align-content:start; gap:10px; padding-block:14px; overflow-y:auto; }
 .order-track-card { display:grid; gap:10px; padding:14px; border:1px solid var(--line); border-radius:18px; background:white; }

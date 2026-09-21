@@ -11,6 +11,8 @@ export async function secureTrackOrder(trackingToken: string) {
     .select(`
       order_number,
       status,
+      payment_method,
+      payment_status,
       fulfillment_type,
       subtotal_cents,
       delivery_fee_cents,
