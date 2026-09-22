@@ -345,7 +345,9 @@ function primaryOrderAction(order) {
 function renderOrderCard(order) {
   const primaryAction = primaryOrderAction(order);
   const scheduled = order.scheduledFor ? `<span class="tag">📅 ${escapeHtml(dateTime(order.scheduledFor))}</span>` : "";
-  const showNotes = !["completed", "cancelled"].includes(order.status);
+  const terminal = ["completed", "cancelled"].includes(order.status);
+  const showNotes = !terminal;
+  const canCancel = !terminal;
   const generalNote = showNotes && order.note.trim()
     ? `<div class="order-card__note"><strong>⚠ Observação</strong><p>${escapeHtml(order.note.trim())}</p></div>`
     : "";
@@ -362,7 +364,7 @@ function renderOrderCard(order) {
       ? `<button class="btn btn--primary" type="button" data-confirm-pix="${escapeHtml(order.id)}">Confirmar Pix recebido</button>`
       : "",
     primaryAction ? `<button class="btn btn--primary" type="button" data-order-status="${primaryAction.status}" data-order-id="${escapeHtml(order.id)}">${escapeHtml(primaryAction.label)}</button>` : "",
-    active ? `<button class="btn btn--danger" type="button" data-order-status="cancelled" data-order-id="${escapeHtml(order.id)}">Cancelar pedido</button>` : ""
+    canCancel ? `<button class="btn btn--danger" type="button" data-order-status="cancelled" data-order-id="${escapeHtml(order.id)}">Cancelar pedido</button>` : ""
   ].filter(Boolean).join("");
   return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">Pedido #${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div>${generalNote}${itemNotesBlock}<div class="order-card__payment"><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong><span>${escapeHtml(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</span></div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
 }

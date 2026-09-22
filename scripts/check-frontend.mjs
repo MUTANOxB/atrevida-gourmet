@@ -146,8 +146,11 @@ if (!/showNotes\s*&&\s*order\.note\.trim\(\)/.test(orderCard) || !/escapeHtml\(o
 if (!/filter\(\(item\)\s*=>\s*item\.note\.trim\(\)\)/.test(orderCard) || !/escapeHtml\(item\.name\)/.test(orderCard) || !/escapeHtml\(item\.note\.trim\(\)\)/.test(orderCard)) {
   fail("Observações de itens ativos devem ser filtradas e escapadas no card.");
 }
-if (!/const\s+showNotes\s*=\s*!\[["']completed["'],\s*["']cancelled["']\]\.includes\(order\.status\)/.test(orderCard) || !/const\s+generalNote\s*=\s*showNotes/.test(orderCard) || !/const\s+itemNotes\s*=\s*showNotes/.test(orderCard)) {
+if (!/const\s+terminal\s*=\s*\[["']completed["'],\s*["']cancelled["']\]\.includes\(order\.status\)/.test(orderCard) || !/const\s+showNotes\s*=\s*!terminal/.test(orderCard) || !/const\s+generalNote\s*=\s*showNotes/.test(orderCard) || !/const\s+itemNotes\s*=\s*showNotes/.test(orderCard)) {
   fail("Pedidos concluídos ou cancelados não devem exibir observações no card.");
+}
+if (!/const\s+canCancel\s*=\s*!terminal/.test(orderCard) || !/canCancel\s*\?\s*`<button[^`]*>Cancelar pedido<\/button>`/.test(orderCard) || /\bactive\b/.test(orderCard)) {
+  fail("Somente pedidos não terminais devem exibir a ação de cancelar, sem referência à variável active.");
 }
 const statusUpdate = adminApp.slice(
   adminApp.indexOf("async function updateOrderStatus"),
