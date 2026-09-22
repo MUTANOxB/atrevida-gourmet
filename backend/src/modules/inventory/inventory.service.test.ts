@@ -129,7 +129,7 @@ test("checkout converte somente o marcador de estoque em conflito público 409",
   assert.doesNotMatch(source, /product_inventory_(?:daily|events|settings).*HttpError/);
 });
 
-test("rotas administrativas obtêm storeId da sessão e aceitam staff autenticado", () => {
+test("rotas usam storeId da sessão e restringem somente stockMode a owner/manager", () => {
   const source = readFileSync(
     new URL("./inventory.routes.ts", import.meta.url),
     "utf8"
@@ -137,8 +137,19 @@ test("rotas administrativas obtêm storeId da sessão e aceitam staff autenticad
   assert.match(source, /storeId: request\.admin!\.storeId/);
   assert.match(source, /app\.addHook\("preHandler", requireAdmin\)/);
   assert.match(source, /requireAdminWriteOrigin/);
-  assert.doesNotMatch(source, /requireRoles/);
+  assert.match(source, /requireRoles\("owner", "manager"\)/);
+  assert.match(source, /input\.stockMode !== undefined[\s\S]*?requireInventoryConfiguration\(request\)/);
   assert.doesNotMatch(source, /request\.body[\s\S]*?storeId/);
+});
+
+test("serviço não faz auditoria pós-RPC que possa transformar sucesso em 503", () => {
+  const source = readFileSync(
+    new URL("./inventory.service.ts", import.meta.url),
+    "utf8"
+  );
+  assert.doesNotMatch(source, /auditInventory|admin_audit_log/);
+  assert.match(source, /rpc\("set_daily_product_inventory"/);
+  assert.match(source, /rpc\("adjust_daily_product_inventory"/);
 });
 
 test("catálogo preserva produto esgotado e anexa somente o DTO público de estoque", () => {

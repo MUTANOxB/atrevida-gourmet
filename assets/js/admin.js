@@ -1181,6 +1181,13 @@ function inventoryControls(product) {
   return `<div class="inventory-numbers"><span><small>Preparado hoje</small><strong>${product.preparedToday}</strong></span><span><small>Vendidas hoje</small><strong>${product.soldToday}</strong></span><label><small>Restante</small><input type="number" min="0" max="100000" step="1" value="${product.remaining}" data-inventory-quantity="${escapeHtml(product.id)}" aria-label="Quantidade restante de ${escapeHtml(product.name)}" /></label></div><div class="inventory-quick-actions"><button type="button" data-inventory-adjust="${escapeHtml(product.id)}" data-quantity-delta="-1" data-prepared-delta="0">−1</button><button type="button" data-inventory-adjust="${escapeHtml(product.id)}" data-quantity-delta="1" data-prepared-delta="1">+1</button><button type="button" data-inventory-adjust="${escapeHtml(product.id)}" data-quantity-delta="5" data-prepared-delta="5">+5</button></div>`;
 }
 
+function inventoryModeControl(product) {
+  if (!["owner", "manager"].includes(state.session?.role)) {
+    return `<div class="field inventory-mode"><span>Modo de estoque</span><strong>${escapeHtml(inventoryModeLabel(product.stockMode))}</strong></div>`;
+  }
+  return `<label class="field inventory-mode"><span>Modo de estoque</span><select data-inventory-mode="${escapeHtml(product.id)}"><option value="always" ${product.stockMode === "always" ? "selected" : ""}>Sempre disponível</option><option value="manual" ${product.stockMode === "manual" ? "selected" : ""}>Disponível / Esgotado</option><option value="quantity" ${product.stockMode === "quantity" ? "selected" : ""}>Controlar quantidade</option></select></label>`;
+}
+
 function renderInventory() {
   const summary = state.inventorySummary;
   $("#inventorySummary").innerHTML = `<strong>${summary.available} disponíveis</strong><strong>${summary.soldOut} esgotados</strong><strong>${summary.lowStock} com estoque baixo</strong>`;
@@ -1204,7 +1211,7 @@ function renderInventory() {
     const statusLabel = product.available
       ? product.lowStock ? "Estoque baixo" : "Disponível"
       : "Esgotado";
-    return `<article class="inventory-card ${product.available ? "" : "is-sold-out"}" data-inventory-card="${escapeHtml(product.id)}" aria-busy="${busy}"><div class="inventory-card__head"><div class="inventory-card__image">${inventoryImage(product)}</div><div><small>${escapeHtml(product.categoryName)}</small><h2>${escapeHtml(product.name)}</h2><span class="status-pill ${product.available ? "" : "is-off"}">${statusLabel}</span></div></div><label class="field inventory-mode"><span>Modo de estoque</span><select data-inventory-mode="${escapeHtml(product.id)}"><option value="always" ${product.stockMode === "always" ? "selected" : ""}>Sempre disponível</option><option value="manual" ${product.stockMode === "manual" ? "selected" : ""}>Disponível / Esgotado</option><option value="quantity" ${product.stockMode === "quantity" ? "selected" : ""}>Controlar quantidade</option></select></label><div class="inventory-card__controls">${inventoryControls(product)}</div><div class="inventory-card__history"><span>${escapeHtml(inventoryModeLabel(product.stockMode))}</span><strong>Esgotou ${product.soldOutLast30Days} ${product.soldOutLast30Days === 1 ? "vez" : "vezes"} nos últimos 30 dias</strong></div></article>`;
+    return `<article class="inventory-card ${product.available ? "" : "is-sold-out"}" data-inventory-card="${escapeHtml(product.id)}" aria-busy="${busy}"><div class="inventory-card__head"><div class="inventory-card__image">${inventoryImage(product)}</div><div><small>${escapeHtml(product.categoryName)}</small><h2>${escapeHtml(product.name)}</h2><span class="status-pill ${product.available ? "" : "is-off"}">${statusLabel}</span></div></div>${inventoryModeControl(product)}<div class="inventory-card__controls">${inventoryControls(product)}</div><div class="inventory-card__history"><span>${escapeHtml(inventoryModeLabel(product.stockMode))}</span><strong>Esgotou ${product.soldOutLast30Days} ${product.soldOutLast30Days === 1 ? "vez" : "vezes"} nos últimos 30 dias</strong></div></article>`;
   }).join("") : `<div class="empty-panel"><strong>Nenhum produto encontrado.</strong><span>Ajuste a busca ou os filtros rápidos.</span></div>`;
 }
 
@@ -1262,14 +1269,9 @@ async function initInventory() {
         renderInventory();
         return;
       }
-      const preparedToday = product.preparedToday + Math.max(0, remaining - Number(product.remaining || 0));
       void mutateInventory(
         product.id,
-        () => api.updateDailyInventory(product.id, {
-          available: remaining > 0,
-          preparedToday,
-          quantityRemaining: remaining
-        }),
+        () => api.updateDailyInventory(product.id, { quantityRemaining: remaining }),
         "Quantidade atualizada."
       );
     }

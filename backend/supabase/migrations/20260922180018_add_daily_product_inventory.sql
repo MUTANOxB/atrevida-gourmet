@@ -233,6 +233,7 @@ as $$
 declare
   sale_row record;
   daily_row public.product_inventory_daily%rowtype;
+  stock_mode_value text;
   returned_event_id uuid;
   return_quantity integer;
 begin
@@ -251,6 +252,24 @@ begin
     order by event.product_id, event.inventory_date
   loop
     return_quantity := sale_row.consumed_quantity;
+
+    perform 1
+    from public.products product_row
+    where product_row.store_id = new.store_id
+      and product_row.id = sale_row.product_id
+    for share;
+
+    if not found then
+      raise exception 'inventory return product is missing';
+    end if;
+
+    select setting.stock_mode
+    into stock_mode_value
+    from public.product_inventory_settings setting
+    where setting.store_id = new.store_id
+      and setting.product_id = sale_row.product_id
+    for share;
+    stock_mode_value := coalesce(stock_mode_value, 'always');
 
     select daily.*
     into daily_row
@@ -291,7 +310,10 @@ begin
       update public.product_inventory_daily
       set
         quantity_remaining = quantity_remaining + return_quantity,
-        available = true
+        available = case
+          when stock_mode_value = 'quantity' then true
+          else available
+        end
       where store_id = new.store_id
         and product_id = sale_row.product_id
         and inventory_date = sale_row.inventory_date;
@@ -360,6 +382,22 @@ begin
   set stock_mode = excluded.stock_mode;
 
   if stock_mode_value = 'always' then
+    insert into public.admin_audit_log (
+      store_id, user_id, action, entity_type, entity_id, metadata
+    ) values (
+      p_store_id,
+      p_actor_user_id,
+      'inventory.updated',
+      'product_inventory',
+      p_product_id,
+      jsonb_strip_nulls(jsonb_build_object(
+        'stockMode', p_stock_mode,
+        'available', p_available,
+        'preparedToday', p_prepared_quantity,
+        'quantityRemaining', p_quantity_remaining
+      ))
+    );
+
     return jsonb_build_object(
       'stockMode', 'always',
       'available', true,
@@ -380,9 +418,9 @@ begin
     p_store_id,
     p_product_id,
     inventory_date_value,
-    coalesce(p_available, false),
-    coalesce(p_prepared_quantity, 0),
-    coalesce(p_quantity_remaining, 0)
+    false,
+    0,
+    0
   )
   on conflict (store_id, product_id, inventory_date) do nothing;
 
@@ -394,8 +432,16 @@ begin
     and daily.inventory_date = inventory_date_value
   for update;
 
-  prepared_after := coalesce(p_prepared_quantity, daily_row.prepared_quantity);
   remaining_after := coalesce(p_quantity_remaining, daily_row.quantity_remaining);
+  prepared_after := case
+    when p_prepared_quantity is not null then p_prepared_quantity
+    when stock_mode_value = 'quantity'
+      and p_quantity_remaining is not null
+      and p_quantity_remaining > daily_row.quantity_remaining
+      then daily_row.prepared_quantity
+        + (p_quantity_remaining - daily_row.quantity_remaining)
+    else daily_row.prepared_quantity
+  end;
   available_after := coalesce(
     p_available,
     case
@@ -465,6 +511,22 @@ begin
       'sold_out', 0, remaining_after
     );
   end if;
+
+  insert into public.admin_audit_log (
+    store_id, user_id, action, entity_type, entity_id, metadata
+  ) values (
+    p_store_id,
+    p_actor_user_id,
+    'inventory.updated',
+    'product_inventory',
+    p_product_id,
+    jsonb_strip_nulls(jsonb_build_object(
+      'stockMode', p_stock_mode,
+      'available', p_available,
+      'preparedToday', p_prepared_quantity,
+      'quantityRemaining', p_quantity_remaining
+    ))
+  );
 
   return jsonb_build_object(
     'stockMode', stock_mode_value,
@@ -594,6 +656,20 @@ begin
       'sold_out', 0, 0
     );
   end if;
+
+  insert into public.admin_audit_log (
+    store_id, user_id, action, entity_type, entity_id, metadata
+  ) values (
+    p_store_id,
+    p_actor_user_id,
+    'inventory.adjusted',
+    'product_inventory',
+    p_product_id,
+    jsonb_build_object(
+      'quantityDelta', p_quantity_delta,
+      'preparedDelta', p_prepared_delta
+    )
+  );
 
   return jsonb_build_object(
     'stockMode', 'quantity',

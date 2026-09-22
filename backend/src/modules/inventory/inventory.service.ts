@@ -76,23 +76,6 @@ export function isStockConflictError(error: unknown) {
   return candidate.code === "P0001" && candidate.message === STOCK_CONFLICT_MARKER;
 }
 
-async function auditInventory(
-  actor: Actor,
-  action: string,
-  productId: string,
-  metadata: Record<string, unknown>
-) {
-  const { error } = await supabaseAdmin.from("admin_audit_log").insert({
-    store_id: actor.storeId,
-    user_id: actor.userId,
-    action,
-    entity_type: "product_inventory",
-    entity_id: productId,
-    metadata
-  });
-  if (error) throw new HttpError(503, "O estoque foi alterado, mas a auditoria não pôde ser registrada.");
-}
-
 export async function listDailyInventory(storeId: string, at = new Date()) {
   const { data: store, error: storeError } = await supabaseAdmin
     .from("stores")
@@ -212,9 +195,6 @@ export async function updateDailyInventory(
   if (error?.code === "22023") throw new HttpError(409, "Os valores informados não são válidos para o estoque.");
   if (error) throw new HttpError(503, "Falha ao atualizar o estoque.");
 
-  await auditInventory(actor, "inventory.updated", productId, {
-    fields: Object.keys(input)
-  });
   return data;
 }
 
@@ -234,9 +214,5 @@ export async function adjustDailyInventory(
   if (error?.code === "22023") throw new HttpError(409, "O ajuste deixaria o estoque fora dos limites permitidos.");
   if (error) throw new HttpError(503, "Falha ao ajustar o estoque.");
 
-  await auditInventory(actor, "inventory.adjusted", productId, {
-    quantityDelta: input.quantityDelta,
-    preparedDelta: input.preparedDelta
-  });
   return data;
 }

@@ -49,7 +49,7 @@ test("migration de pagamentos é aditiva e protege o aceite de Pix não aprovado
 test("migration de sessões públicas mantém tokens protegidos e isolamento multi-loja", () => {
   const files = readdirSync(migrationsRoot)
     .filter((name) => name.endsWith("_add_public_order_sessions.sql"));
-  assert.equal(files.length, 1);
+  assert.deepEqual(files, ["20260922160758_add_public_order_sessions.sql"]);
   const migration = readFileSync(
     new URL(`../supabase/migrations/${files[0]}`, import.meta.url),
     "utf8"
@@ -163,6 +163,64 @@ test("cancelamento devolve uma vez ao dia original e ajustes administrativos sã
   assert.match(migration, /adjust_daily_product_inventory[\s\S]*?for update[\s\S]*?remaining_after := daily_row\.quantity_remaining \+ p_quantity_delta/i);
   assert.match(migration, /remaining_after not between 0 and 100000/i);
   assert.match(migration, /daily_row\.quantity_remaining > 0 and remaining_after = 0[\s\S]*?'sold_out'/i);
+});
+
+test("RPCs registram auditoria na mesma transação e o serviço não audita depois", () => {
+  const migration = dailyInventoryMigration();
+  const setRpc = migration.match(
+    /create or replace function public\.set_daily_product_inventory\([\s\S]*?\n\$\$;/i
+  )?.[0] ?? "";
+  const adjustRpc = migration.match(
+    /create or replace function public\.adjust_daily_product_inventory\([\s\S]*?\n\$\$;/i
+  )?.[0] ?? "";
+  assert.ok(setRpc);
+  assert.ok(adjustRpc);
+  assert.equal((setRpc.match(/'inventory\.updated'/g) ?? []).length, 2);
+  assert.equal((setRpc.match(/return jsonb_build_object/g) ?? []).length, 2);
+  assert.match(setRpc, /insert into public\.admin_audit_log[\s\S]*?'inventory\.updated'/i);
+  assert.match(adjustRpc, /insert into public\.admin_audit_log[\s\S]*?'inventory\.adjusted'[\s\S]*?return jsonb_build_object/i);
+
+  const service = readFileSync(
+    new URL("./modules/inventory/inventory.service.ts", import.meta.url),
+    "utf8"
+  );
+  assert.doesNotMatch(service, /auditInventory|admin_audit_log/);
+});
+
+test("set diário cria linha neutra e calcula produção usando o saldo travado", () => {
+  const migration = dailyInventoryMigration();
+  const setRpc = migration.match(
+    /create or replace function public\.set_daily_product_inventory\([\s\S]*?\n\$\$;/i
+  )?.[0] ?? "";
+  assert.match(
+    setRpc,
+    /insert into public\.product_inventory_daily[\s\S]*?values\s*\(\s*p_store_id,\s*p_product_id,\s*inventory_date_value,\s*false,\s*0,\s*0\s*\)/i
+  );
+  assert.match(setRpc, /select daily\.\*[\s\S]*?for update;/i);
+  assert.match(
+    setRpc,
+    /when p_prepared_quantity is not null then p_prepared_quantity[\s\S]*?p_quantity_remaining > daily_row\.quantity_remaining[\s\S]*?daily_row\.prepared_quantity[\s\S]*?p_quantity_remaining - daily_row\.quantity_remaining[\s\S]*?else daily_row\.prepared_quantity/i
+  );
+  assert.match(setRpc, /prepared_after is distinct from daily_row\.prepared_quantity[\s\S]*?'prepared'/i);
+  assert.match(setRpc, /remaining_after is distinct from daily_row\.quantity_remaining[\s\S]*?'adjustment'/i);
+  assert.match(setRpc, /available_after is distinct from daily_row\.available[\s\S]*?'availability'/i);
+});
+
+test("cancel_return respeita o modo atual e não reativa estoque manual", () => {
+  const migration = dailyInventoryMigration();
+  const restoreRpc = migration.match(
+    /create or replace function public\.restore_daily_product_inventory_on_cancel\(\)[\s\S]*?\n\$\$;/i
+  )?.[0] ?? "";
+  assert.match(restoreRpc, /from public\.products product_row[\s\S]*?for share;/i);
+  assert.match(restoreRpc, /select setting\.stock_mode[\s\S]*?for share;/i);
+  assert.match(restoreRpc, /select daily\.\*[\s\S]*?for update;/i);
+  assert.match(restoreRpc, /quantity_remaining = quantity_remaining \+ return_quantity/i);
+  assert.match(
+    restoreRpc,
+    /available = case\s*when stock_mode_value = 'quantity' then true\s*else available\s*end/i
+  );
+  assert.match(restoreRpc, /event\.inventory_date[\s\S]*?event\.event_type = 'sale'/i);
+  assert.match(restoreRpc, /event_type = 'cancel_return'[\s\S]*?do nothing/i);
 });
 
 test("seed comercial mantém somente as categorias confirmadas da Atrevida", () => {

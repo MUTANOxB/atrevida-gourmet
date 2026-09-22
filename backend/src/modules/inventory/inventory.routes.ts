@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   requireAdmin,
-  requireAdminWriteOrigin
+  requireAdminWriteOrigin,
+  requireRoles
 } from "../../middleware/admin-auth.js";
 import { noStore } from "../../middleware/no-store.js";
 import {
@@ -22,6 +23,8 @@ function actor(request: FastifyRequest) {
   };
 }
 
+const requireInventoryConfiguration = requireRoles("owner", "manager");
+
 export async function inventoryRoutes(app: FastifyInstance) {
   app.addHook("onRequest", noStore);
   app.addHook("preHandler", requireAdmin);
@@ -34,10 +37,14 @@ export async function inventoryRoutes(app: FastifyInstance) {
     { preHandler: [requireAdminWriteOrigin] },
     async (request) => {
       const { productId } = inventoryProductParams.parse(request.params);
+      const input = updateInventoryBody.parse(request.body);
+      if (input.stockMode !== undefined) {
+        await requireInventoryConfiguration(request);
+      }
       return updateDailyInventory(
         actor(request),
         productId,
-        updateInventoryBody.parse(request.body)
+        input
       );
     }
   );

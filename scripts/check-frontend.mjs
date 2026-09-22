@@ -503,12 +503,20 @@ for (const contract of [
 }
 for (const contract of [
   "function renderInventory()",
+  "function inventoryModeControl(product)",
   "data-inventory-adjust",
   "soldOutLast30Days",
   "inventoryFilter",
-  "preparedDelta: Number"
+  "preparedDelta: Number",
+  '["owner", "manager"].includes(state.session?.role)'
 ]) {
   if (!adminApp.includes(contract)) fail(`Operação administrativa de estoque ausente: ${contract}`);
+}
+if (!/api\.updateDailyInventory\(product\.id, \{ quantityRemaining: remaining \}\)/.test(adminApp)) {
+  fail("Edição direta de restante deve enviar somente quantityRemaining.");
+}
+if (/preparedToday\s*=\s*product\.preparedToday\s*\+/.test(adminApp)) {
+  fail("Frontend não pode calcular preparedToday usando saldo possivelmente obsoleto.");
 }
 
 console.log(`${files.length} JavaScript(s) e ${htmlFiles.length} página(s) verificados.`);

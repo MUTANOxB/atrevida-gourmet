@@ -690,6 +690,7 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   const zoneId = "77777777-7777-4777-8777-777777777777";
   const orderId = "88888888-8888-4888-8888-888888888888";
   const calls: string[] = [];
+  const inventoryRpcCalls: Array<{ name: string; input: Record<string, any> }> = [];
   let membershipRole: "owner" | "manager" | "staff" = "manager";
   let membershipStoreId = storeId;
   let storedImagePath = "";
@@ -855,6 +856,16 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
         store_id: membershipStoreId,
         role: membershipRole,
         stores: { slug: "atrevida-gourmet" }
+      });
+    }
+    if (["set_daily_product_inventory", "adjust_daily_product_inventory"].includes(table)) {
+      inventoryRpcCalls.push({ name: table, input });
+      return jsonResponse({
+        stockMode: input.p_stock_mode ?? "quantity",
+        available: input.p_available ?? true,
+        preparedToday: input.p_prepared_quantity ?? 10,
+        quantityRemaining: input.p_quantity_remaining ?? 10,
+        inventoryDate: "2026-09-22"
       });
     }
     if (table === "admin_audit_log") return jsonResponse([]);
@@ -1236,6 +1247,14 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   assert.equal(settings.statusCode, 200, settings.body);
   assert.equal(settings.json().name, "Atrevida Gourmet Atualizada");
 
+  const managerStockMode = await app.inject({
+    method: "PATCH",
+    url: `/api/admin/inventory/${productId}`,
+    headers: managerHeaders,
+    payload: { stockMode: "quantity" }
+  });
+  assert.equal(managerStockMode.statusCode, 200, managerStockMode.body);
+
   membershipRole = "owner";
   const ownerCategories = await app.inject({
     method: "GET",
@@ -1243,6 +1262,13 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     headers: { authorization: "Bearer owner-access-token", "x-store-slug": "atrevida-gourmet" }
   });
   assert.equal(ownerCategories.statusCode, 200, ownerCategories.body);
+  const ownerStockMode = await app.inject({
+    method: "PATCH",
+    url: `/api/admin/inventory/${productId}`,
+    headers: { authorization: "Bearer owner-access-token", "x-store-slug": "atrevida-gourmet" },
+    payload: { stockMode: "manual" }
+  });
+  assert.equal(ownerStockMode.statusCode, 200, ownerStockMode.body);
 
   membershipRole = "staff";
   const staffHeaders = {
@@ -1262,6 +1288,28 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     method: "GET", url: "/api/admin/orders", headers: staffHeaders
   });
   assert.equal(staffOrders.statusCode, 200, staffOrders.body);
+  const staffAvailability = await app.inject({
+    method: "PATCH", url: `/api/admin/inventory/${productId}`, headers: staffHeaders,
+    payload: { available: false }
+  });
+  assert.equal(staffAvailability.statusCode, 200, staffAvailability.body);
+  const staffDirectQuantity = await app.inject({
+    method: "PATCH", url: `/api/admin/inventory/${productId}`, headers: staffHeaders,
+    payload: { preparedToday: 15, quantityRemaining: 12 }
+  });
+  assert.equal(staffDirectQuantity.statusCode, 200, staffDirectQuantity.body);
+  const staffAdjustment = await app.inject({
+    method: "POST", url: `/api/admin/inventory/${productId}/adjust`, headers: staffHeaders,
+    payload: { quantityDelta: 5, preparedDelta: 5 }
+  });
+  assert.equal(staffAdjustment.statusCode, 200, staffAdjustment.body);
+  const inventoryCallsBeforeForbiddenMode = inventoryRpcCalls.length;
+  const staffStockMode = await app.inject({
+    method: "PATCH", url: `/api/admin/inventory/${productId}`, headers: staffHeaders,
+    payload: { stockMode: "always" }
+  });
+  assert.equal(staffStockMode.statusCode, 403, staffStockMode.body);
+  assert.equal(inventoryRpcCalls.length, inventoryCallsBeforeForbiddenMode);
   const staffStatus = await app.inject({
     method: "PATCH", url: `/api/admin/orders/${orderId}/status`, headers: staffHeaders,
     payload: { status: "confirmed" }
