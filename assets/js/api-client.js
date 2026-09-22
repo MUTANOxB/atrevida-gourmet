@@ -168,6 +168,18 @@ export const api = {
     return jsonRequest(`/admin/orders/${encodeURIComponent(orderId)}/payment/confirm-pix`, "POST", {});
   },
 
+  getDailyInventory() {
+    return apiFetch("/admin/inventory");
+  },
+
+  updateDailyInventory(productId, input) {
+    return jsonRequest(`/admin/inventory/${encodeURIComponent(productId)}`, "PATCH", input);
+  },
+
+  adjustDailyInventory(productId, input) {
+    return jsonRequest(`/admin/inventory/${encodeURIComponent(productId)}/adjust`, "POST", input);
+  },
+
   getStoreSettings() {
     return apiFetch("/admin/store");
   },

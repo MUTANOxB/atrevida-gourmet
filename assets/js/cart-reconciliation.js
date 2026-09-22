@@ -57,9 +57,25 @@ function normalizedOptions(product, value) {
   return options;
 }
 
-export function reconcileCartItems(cart, products, { maxLineQuantity, createUid }) {
+function inventoryLimit(product) {
+  const stockMode = product.stockMode || "always";
+  if (stockMode === "always") return Number.POSITIVE_INFINITY;
+  if (stockMode === "manual") return product.available === true ? Number.POSITIVE_INFINITY : 0;
+  if (stockMode !== "quantity" || product.available !== true) return 0;
+  return Number.isInteger(product.remainingQuantity) && product.remainingQuantity > 0
+    ? product.remainingQuantity
+    : 0;
+}
+
+export function reconcileCartItems(
+  cart,
+  products,
+  { maxLineQuantity, maxLines = 40, maxTotalUnits = 200, createUid }
+) {
   const source = Array.isArray(cart) ? cart : [];
   const reconciled = [];
+  const allocatedByProduct = new Map();
+  let totalUnits = 0;
   let changed = !Array.isArray(cart);
 
   for (const item of source) {
@@ -72,14 +88,32 @@ export function reconcileCartItems(cart, products, { maxLineQuantity, createUid 
     const product = products.get(productId);
     const quantity = normalizedQuantity(item.quantity ?? item.qty, maxLineQuantity);
     const options = product ? normalizedOptions(product, item.options) : null;
+    const stockLimit = product ? inventoryLimit(product) : 0;
     if (
       !product ||
       product.active === false ||
       !Number.isInteger(product.priceCents) ||
       product.priceCents < 0 ||
       quantity == null ||
-      options == null
+      options == null ||
+      stockLimit <= 0 ||
+      reconciled.length >= maxLines ||
+      totalUnits >= maxTotalUnits
     ) {
+      changed = true;
+      continue;
+    }
+
+    const alreadyAllocated = allocatedByProduct.get(productId) || 0;
+    const stockCapacity = Number.isFinite(stockLimit)
+      ? Math.max(0, stockLimit - alreadyAllocated)
+      : quantity;
+    const allowedQuantity = Math.min(
+      quantity,
+      stockCapacity,
+      maxTotalUnits - totalUnits
+    );
+    if (allowedQuantity < 1) {
       changed = true;
       continue;
     }
@@ -87,12 +121,14 @@ export function reconcileCartItems(cart, products, { maxLineQuantity, createUid 
     const line = {
       uid: String(item.uid || createUid()),
       productId,
-      quantity,
+      quantity: allowedQuantity,
       note: String(item.note || "").slice(0, 300),
       options
     };
     if (JSON.stringify(line) !== JSON.stringify(item)) changed = true;
     reconciled.push(line);
+    allocatedByProduct.set(productId, alreadyAllocated + allowedQuantity);
+    totalUnits += allowedQuantity;
   }
 
   return { cart: reconciled, changed };

@@ -405,6 +405,15 @@ button:disabled {
 
 .product-card.is-unavailable { opacity: .76; }
 
+.product-card.is-sold-out .product-card__photo,
+.product-card.is-sold-out .product-placeholder {
+  filter: grayscale(1);
+}
+
+.product-card.is-sold-out .product-card__image {
+  cursor: not-allowed;
+}
+
 .product-card__badge {
   position: absolute;
   top: 10px;
@@ -414,6 +423,20 @@ button:disabled {
   color: white;
   background: var(--rose-strong);
   font: 700 .62rem Poppins, sans-serif;
+}
+
+.product-card__badge--sold-out {
+  right: 10px;
+  left: 10px;
+  text-align: center;
+  background: var(--forest);
+  font-size: .68rem;
+  letter-spacing: .05em;
+}
+
+.product-card__stock {
+  color: var(--forest);
+  font: 700 .72rem Poppins, sans-serif;
 }
 
 .product-card__body {

@@ -15,6 +15,10 @@ const state = {
   orderStream: null,
   categories: [],
   products: [],
+  inventory: [],
+  inventorySummary: { available: 0, soldOut: 0, lowStock: 0 },
+  inventoryFilter: "all",
+  inventoryBusy: new Set(),
   optionGroups: [],
   optionValues: [],
   optionProduct: null,
@@ -222,7 +226,7 @@ async function requireSession() {
     const session = normalizeSession(await api.getSession());
     if (!session.authenticated) throw new ApiError("Sessão inválida.", { status: 401 });
     state.session = session;
-    if (session.role === "staff" && page !== "orders") {
+    if (session.role === "staff" && !["orders", "inventory"].includes(page)) {
       window.location.replace("/admin/pedidos/");
       return false;
     }
@@ -250,6 +254,13 @@ async function requireSession() {
 }
 
 function wireShell() {
+  const orderNav = $('[data-nav="orders"]');
+  if (orderNav && !$('[data-nav="inventory"]')) {
+    orderNav.insertAdjacentHTML(
+      "afterend",
+      '<a href="/admin/estoque/" data-nav="inventory"><span>📦</span>Estoque</a>'
+    );
+  }
   document.addEventListener("pointerdown", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -1128,11 +1139,172 @@ async function initSettings() {
   await Promise.all([loadStoreSettings(), loadHours(), loadExceptions()]);
 }
 
+function normalizeInventoryProduct(item) {
+  return {
+    id: String(item.id || ""),
+    name: String(item.name || "Produto"),
+    imageUrl: item.imageUrl || null,
+    categoryName: String(item.categoryName || "Sem categoria"),
+    stockMode: ["always", "manual", "quantity"].includes(item.stockMode)
+      ? item.stockMode
+      : "always",
+    available: item.available === true,
+    lowStock: item.lowStock === true,
+    preparedToday: Number(item.preparedToday || 0),
+    soldToday: Number(item.soldToday || 0),
+    remaining: item.remaining === null ? null : Number(item.remaining || 0),
+    soldOutLast30Days: Number(item.soldOutLast30Days || 0)
+  };
+}
+
+function inventoryModeLabel(mode) {
+  return {
+    always: "Sempre disponível",
+    manual: "Disponível / Esgotado",
+    quantity: "Controlar quantidade"
+  }[mode] || mode;
+}
+
+function inventoryImage(product) {
+  return product.imageUrl
+    ? `<img src="${escapeHtml(product.imageUrl)}" alt="" loading="lazy" decoding="async" />`
+    : `<span aria-hidden="true">🍰</span>`;
+}
+
+function inventoryControls(product) {
+  if (product.stockMode === "always") {
+    return `<div class="inventory-always"><strong>Sempre disponível</strong><span>Sem controle de quantidade</span></div>`;
+  }
+  if (product.stockMode === "manual") {
+    return `<button class="inventory-toggle ${product.available ? "is-available" : "is-sold-out"}" type="button" data-inventory-availability="${escapeHtml(product.id)}" aria-pressed="${product.available}">${product.available ? "DISPONÍVEL" : "ESGOTADO"}</button>`;
+  }
+  return `<div class="inventory-numbers"><span><small>Preparado hoje</small><strong>${product.preparedToday}</strong></span><span><small>Vendidas hoje</small><strong>${product.soldToday}</strong></span><label><small>Restante</small><input type="number" min="0" max="100000" step="1" value="${product.remaining}" data-inventory-quantity="${escapeHtml(product.id)}" aria-label="Quantidade restante de ${escapeHtml(product.name)}" /></label></div><div class="inventory-quick-actions"><button type="button" data-inventory-adjust="${escapeHtml(product.id)}" data-quantity-delta="-1" data-prepared-delta="0">−1</button><button type="button" data-inventory-adjust="${escapeHtml(product.id)}" data-quantity-delta="1" data-prepared-delta="1">+1</button><button type="button" data-inventory-adjust="${escapeHtml(product.id)}" data-quantity-delta="5" data-prepared-delta="5">+5</button></div>`;
+}
+
+function renderInventory() {
+  const summary = state.inventorySummary;
+  $("#inventorySummary").innerHTML = `<strong>${summary.available} disponíveis</strong><strong>${summary.soldOut} esgotados</strong><strong>${summary.lowStock} com estoque baixo</strong>`;
+  $$('[data-inventory-filter]').forEach((button) => {
+    const active = button.dataset.inventoryFilter === state.inventoryFilter;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const term = normalizeText($("#inventorySearch").value.trim());
+  const products = state.inventory.filter((product) => {
+    const matchesSearch = !term || normalizeText(`${product.name} ${product.categoryName}`).includes(term);
+    const matchesFilter = state.inventoryFilter === "all"
+      || (state.inventoryFilter === "available" && product.available)
+      || (state.inventoryFilter === "sold-out" && !product.available)
+      || (state.inventoryFilter === "low" && product.lowStock);
+    return matchesSearch && matchesFilter;
+  });
+  $("#inventoryCount").textContent = `${products.length} ${products.length === 1 ? "produto" : "produtos"}`;
+  $("#inventoryList").innerHTML = products.length ? products.map((product) => {
+    const busy = state.inventoryBusy.has(product.id);
+    const statusLabel = product.available
+      ? product.lowStock ? "Estoque baixo" : "Disponível"
+      : "Esgotado";
+    return `<article class="inventory-card ${product.available ? "" : "is-sold-out"}" data-inventory-card="${escapeHtml(product.id)}" aria-busy="${busy}"><div class="inventory-card__head"><div class="inventory-card__image">${inventoryImage(product)}</div><div><small>${escapeHtml(product.categoryName)}</small><h2>${escapeHtml(product.name)}</h2><span class="status-pill ${product.available ? "" : "is-off"}">${statusLabel}</span></div></div><label class="field inventory-mode"><span>Modo de estoque</span><select data-inventory-mode="${escapeHtml(product.id)}"><option value="always" ${product.stockMode === "always" ? "selected" : ""}>Sempre disponível</option><option value="manual" ${product.stockMode === "manual" ? "selected" : ""}>Disponível / Esgotado</option><option value="quantity" ${product.stockMode === "quantity" ? "selected" : ""}>Controlar quantidade</option></select></label><div class="inventory-card__controls">${inventoryControls(product)}</div><div class="inventory-card__history"><span>${escapeHtml(inventoryModeLabel(product.stockMode))}</span><strong>Esgotou ${product.soldOutLast30Days} ${product.soldOutLast30Days === 1 ? "vez" : "vezes"} nos últimos 30 dias</strong></div></article>`;
+  }).join("") : `<div class="empty-panel"><strong>Nenhum produto encontrado.</strong><span>Ajuste a busca ou os filtros rápidos.</span></div>`;
+}
+
+async function loadInventory({ quiet = false } = {}) {
+  if (!quiet) $("#inventoryList").innerHTML = `<div class="empty-panel"><strong>Carregando estoque do dia…</strong></div>`;
+  try {
+    const payload = await api.getDailyInventory();
+    state.inventory = asList(payload, "products").map(normalizeInventoryProduct);
+    state.inventorySummary = payload?.summary || { available: 0, soldOut: 0, lowStock: 0 };
+    renderInventory();
+  } catch (error) {
+    $("#inventoryList").innerHTML = `<div class="empty-panel"><strong>Não foi possível carregar.</strong><span>${escapeHtml(error.message)}</span></div>`;
+  }
+}
+
+async function mutateInventory(productId, operation, successMessage) {
+  if (state.inventoryBusy.has(productId)) return;
+  state.inventoryBusy.add(productId);
+  renderInventory();
+  try {
+    await operation();
+    toast(successMessage);
+    await loadInventory({ quiet: true });
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    state.inventoryBusy.delete(productId);
+    renderInventory();
+  }
+}
+
+async function initInventory() {
+  $("#inventorySearch").addEventListener("input", renderInventory);
+  $("#inventoryFilters").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-inventory-filter]");
+    if (!button) return;
+    state.inventoryFilter = button.dataset.inventoryFilter;
+    renderInventory();
+  });
+  $("#inventoryList").addEventListener("change", (event) => {
+    const mode = event.target.closest("[data-inventory-mode]");
+    const quantity = event.target.closest("[data-inventory-quantity]");
+    if (mode) {
+      void mutateInventory(
+        mode.dataset.inventoryMode,
+        () => api.updateDailyInventory(mode.dataset.inventoryMode, { stockMode: mode.value }),
+        "Modo de estoque atualizado."
+      );
+    }
+    if (quantity) {
+      const product = state.inventory.find((item) => item.id === quantity.dataset.inventoryQuantity);
+      const remaining = Number(quantity.value);
+      if (!product || !Number.isInteger(remaining) || remaining < 0 || remaining > 100000) {
+        toast("Informe uma quantidade inteira entre 0 e 100000.", "error");
+        renderInventory();
+        return;
+      }
+      const preparedToday = product.preparedToday + Math.max(0, remaining - Number(product.remaining || 0));
+      void mutateInventory(
+        product.id,
+        () => api.updateDailyInventory(product.id, {
+          available: remaining > 0,
+          preparedToday,
+          quantityRemaining: remaining
+        }),
+        "Quantidade atualizada."
+      );
+    }
+  });
+  $("#inventoryList").addEventListener("click", (event) => {
+    const availability = event.target.closest("[data-inventory-availability]");
+    const adjustment = event.target.closest("[data-inventory-adjust]");
+    if (availability) {
+      const product = state.inventory.find((item) => item.id === availability.dataset.inventoryAvailability);
+      if (product) void mutateInventory(
+        product.id,
+        () => api.updateDailyInventory(product.id, { available: !product.available }),
+        product.available ? "Produto marcado como esgotado." : "Produto marcado como disponível."
+      );
+    }
+    if (adjustment) {
+      const productId = adjustment.dataset.inventoryAdjust;
+      void mutateInventory(
+        productId,
+        () => api.adjustDailyInventory(productId, {
+          quantityDelta: Number(adjustment.dataset.quantityDelta),
+          preparedDelta: Number(adjustment.dataset.preparedDelta)
+        }),
+        "Estoque ajustado."
+      );
+    }
+  });
+  await loadInventory();
+}
+
 async function init() {
   wireShell();
   if (page === "login") { await initLogin(); return; }
   if (!await requireSession()) return;
-  const initializers = { orders: initOrders, products: initProducts, categories: initCategories, delivery: initDelivery, settings: initSettings };
+  const initializers = { orders: initOrders, inventory: initInventory, products: initProducts, categories: initCategories, delivery: initDelivery, settings: initSettings };
   await initializers[page]?.();
 }
 

@@ -10,6 +10,7 @@ import { directPixConfigured, generatePixPayload } from "../../lib/pix.js";
 import { publicOrderTrackingDto } from "../../lib/public-dto.js";
 import { supabaseAdmin } from "../../lib/supabase.js";
 import { evaluateStoreSchedule } from "../store/availability.js";
+import { isStockConflictError } from "../inventory/inventory.service.js";
 import type { CreateOrderInput } from "./orders.schemas.js";
 import { initialPaymentState } from "./payment.js";
 import { priceOrderItems, type PricingProduct } from "./pricing.js";
@@ -311,6 +312,12 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
       if (!error) {
         order = Array.isArray(data) ? data[0] : data;
         break;
+      }
+      if (isStockConflictError(error)) {
+        throw new HttpError(
+          409,
+          "Alguns itens acabaram ou não possuem mais a quantidade solicitada."
+        );
       }
       if (error.code !== "23505" || attempt === 2) {
         throw new HttpError(503, "Não foi possível criar o pedido.");

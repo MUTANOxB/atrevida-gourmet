@@ -330,6 +330,7 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
       }
       if (select.includes("categories(") && select.includes("products!products_category_same_store_fkey(")) {
         return jsonResponse({
+          id: storeId,
           slug: "atrevida-gourmet",
           name: "Atrevida Gourmet",
           description: "",
@@ -418,6 +419,8 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
     if (table === "store_hours") return jsonResponse(hours);
     if (table === "store_schedule_exceptions") return jsonResponse([]);
     if (table === "store_payment_methods") return jsonResponse({ method: "pix" });
+    if (table === "product_inventory_settings") return jsonResponse([]);
+    if (table === "product_inventory_daily") return jsonResponse([]);
     if (table === "products") {
       assert.match(
         url.searchParams.get("select") ?? "",
@@ -472,6 +475,15 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
   assert.equal(catalog.statusCode, 200);
   assert.equal(catalog.json().paymentMethods[0].method, "pix");
   assert.equal(catalog.json().categories[0].products[0].priceCents, 600);
+  assert.deepEqual(
+    {
+      stockMode: catalog.json().categories[0].products[0].stockMode,
+      available: catalog.json().categories[0].products[0].available,
+      remainingQuantity: catalog.json().categories[0].products[0].remainingQuantity,
+      lowStock: catalog.json().categories[0].products[0].lowStock
+    },
+    { stockMode: "always", available: true, remainingQuantity: null, lowStock: false }
+  );
 
   const quote = await app.inject({
     method: "POST",

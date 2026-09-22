@@ -19,6 +19,7 @@ import { adminRoutes } from "./modules/admin/admin.routes.js";
 import { adminAuthRoutes } from "./modules/admin/auth.routes.js";
 import { adminUploadRoutes } from "./modules/admin/uploads.routes.js";
 import { catalogRoutes } from "./modules/catalog/catalog.routes.js";
+import { inventoryRoutes } from "./modules/inventory/inventory.routes.js";
 import { orderRoutes } from "./modules/orders/orders.routes.js";
 import {
   createSupabaseOrderEventBus,
@@ -118,6 +119,7 @@ export async function buildApp(
   await app.register(adminAuthRoutes);
   await app.register(adminUploadRoutes);
   await app.register(adminRoutes);
+  await app.register(inventoryRoutes);
   await app.register(realtimeRoutes, {
     events: orderEvents,
     connections: options.sseConnections,

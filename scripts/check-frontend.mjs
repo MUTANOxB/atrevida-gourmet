@@ -10,6 +10,7 @@ const requiredPages = [
   "index.html",
   "admin/login/index.html",
   "admin/pedidos/index.html",
+  "admin/estoque/index.html",
   "admin/cardapio/index.html",
   "admin/categorias/index.html",
   "admin/entregas/index.html",
@@ -196,6 +197,55 @@ const validCart = reconcile([validCartLine]);
 if (validCart.changed || JSON.stringify(validCart.cart) !== JSON.stringify([validCartLine])) {
   fail("Carrinho válido deve continuar intacto após a reconciliação.");
 }
+const quantityProduct = {
+  ...cartProduct,
+  stockMode: "quantity",
+  available: true,
+  remainingQuantity: 5
+};
+const quantityProducts = new Map([[quantityProduct.id, quantityProduct]]);
+const reconcileQuantity = (cart) => reconcileCartItems(cart, quantityProducts, {
+  maxLineQuantity: 50,
+  maxLines: 40,
+  maxTotalUnits: 200,
+  createUid: () => "generated-line"
+});
+const aggregatedStock = reconcileQuantity([
+  { ...validCartLine, uid: "stock-line-1", quantity: 3 },
+  { ...validCartLine, uid: "stock-line-2", quantity: 4 }
+]);
+if (
+  aggregatedStock.cart.length !== 2 ||
+  aggregatedStock.cart[0].quantity !== 3 ||
+  aggregatedStock.cart[1].quantity !== 2 ||
+  !aggregatedStock.changed
+) {
+  fail("Duas linhas do mesmo produto devem compartilhar o estoque agregado.");
+}
+const soldOutCart = reconcileCartItems(
+  [validCartLine],
+  new Map([[quantityProduct.id, { ...quantityProduct, available: false, remainingQuantity: 0 }]]),
+  { maxLineQuantity: 50, maxLines: 40, maxTotalUnits: 200, createUid: () => "generated-line" }
+);
+if (soldOutCart.cart.length || !soldOutCart.changed) {
+  fail("Produto esgotado deve ser removido do carrinho reconciliado.");
+}
+const tooManyLines = reconcile(Array.from({ length: 45 }, (_, index) => ({
+  ...validCartLine,
+  uid: `line-${index}`,
+  quantity: 1
+})));
+if (tooManyLines.cart.length !== 40 || !tooManyLines.changed) {
+  fail("Carrinho adulterado não pode manter mais de 40 linhas.");
+}
+const tooManyUnits = reconcile(Array.from({ length: 5 }, (_, index) => ({
+  ...validCartLine,
+  uid: `unit-line-${index}`,
+  quantity: 50
+})));
+if (tooManyUnits.cart.reduce((sum, item) => sum + item.quantity, 0) !== 200 || !tooManyUnits.changed) {
+  fail("Carrinho adulterado não pode manter mais de 200 unidades.");
+}
 const reconcileBlock = functionBlock(publicApp, "reconcileCart", "renderTabs");
 const cartChangeMessage = "Alguns itens do carrinho foram atualizados ou removidos porque o cardápio mudou.";
 if ((reconcileBlock.match(/toast\(/g) || []).length !== 1 || !reconcileBlock.includes(cartChangeMessage)) {
@@ -375,6 +425,27 @@ if (/localStorage\.(?:getItem|setItem)\(TRACKING_KEY/.test(storagePolicy)) {
 if (!apiClient.includes("getMyOrders(storeSlug)") || !apiClient.includes("/public/my-orders?storeSlug=")) {
   fail("Meus pedidos deve carregar pela API persistente.");
 }
+
+for (const contract of [
+  "product-card__badge--sold-out",
+  "ESGOTADO HOJE",
+  "Últimas ${product.remainingQuantity} unidades",
+  "productAddCapacity(product)",
+  "error instanceof ApiError && error.status === 409",
+  "await loadCatalog()"
+]) {
+  if (!publicApp.includes(contract)) fail(`Fluxo público de estoque ausente: ${contract}`);
+}
+if (!publicApp.includes("!productIsAvailable(product)")) {
+  fail("Produto indisponível não pode abrir o modal de compra.");
+}
+const publicCss = fs.readFileSync(path.join(root, "assets", "css", "styles.css"), "utf8");
+if (!/\.product-card\.is-sold-out[\s\S]*?filter:\s*grayscale\(1\)/.test(publicCss)) {
+  fail("Imagem de produto esgotado deve ser dessaturada.");
+}
+if (!/disabled aria-disabled=/.test(publicApp)) {
+  fail("Ações de produto esgotado devem estar desabilitadas e acessíveis.");
+}
 if (!publicApp.includes("Carregando seus pedidos…") || !publicApp.includes("api.getMyOrders(STORE_SLUG)")) {
   fail("Meus pedidos deve exibir carregamento antes de consultar a API.");
 }
@@ -395,7 +466,7 @@ if (!apiClient.includes("EventSource reconecta automaticamente")) {
   fail("A stream deve preservar a reconexão automática do EventSource.");
 }
 
-const requiredAdminPages = ["login", "pedidos", "cardapio", "categorias", "entregas", "configuracoes"];
+const requiredAdminPages = ["login", "pedidos", "estoque", "cardapio", "categorias", "entregas", "configuracoes"];
 for (const page of requiredAdminPages) {
   if (!fs.existsSync(path.join(root, "admin", page, "index.html"))) {
     fail(`Página administrativa ausente: /admin/${page}`);
@@ -410,6 +481,34 @@ for (const file of htmlFiles.filter((file) => file.includes(`${path.sep}admin${p
 
 if (fs.existsSync(path.join(root, "assets", "js", "products.js"))) {
   fail("O mock legado products.js não pode ser publicado.");
+}
+
+const inventoryAdminHtml = fs.readFileSync(path.join(root, "admin", "estoque", "index.html"), "utf8");
+for (const contract of [
+  "inventorySummary",
+  "inventorySearch",
+  'data-inventory-filter="available"',
+  'data-inventory-filter="sold-out"',
+  'data-inventory-filter="low"',
+  "inventoryList"
+]) {
+  if (!inventoryAdminHtml.includes(contract)) fail(`Tela administrativa de estoque incompleta: ${contract}`);
+}
+for (const contract of [
+  "getDailyInventory()",
+  "updateDailyInventory(productId, input)",
+  "adjustDailyInventory(productId, input)"
+]) {
+  if (!apiClient.includes(contract)) fail(`Contrato de API de estoque ausente: ${contract}`);
+}
+for (const contract of [
+  "function renderInventory()",
+  "data-inventory-adjust",
+  "soldOutLast30Days",
+  "inventoryFilter",
+  "preparedDelta: Number"
+]) {
+  if (!adminApp.includes(contract)) fail(`Operação administrativa de estoque ausente: ${contract}`);
 }
 
 console.log(`${files.length} JavaScript(s) e ${htmlFiles.length} página(s) verificados.`);

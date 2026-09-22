@@ -1,4 +1,4 @@
-import { api, openApiEventStream } from "./api-client.js";
+import { api, ApiError, openApiEventStream } from "./api-client.js";
 import { loadCart, saveCart, loadTrackedOrders, saveTrackedOrders } from "./browser-storage-policy.js";
 import { reconcileCartItems } from "./cart-reconciliation.js";
 
@@ -248,6 +248,14 @@ function normalizeCatalog(payload) {
       priceCents: Number.isInteger(product.priceCents) ? product.priceCents : (Number.isInteger(product.price_cents) ? product.price_cents : null),
       featured: Boolean(product.featured),
       active: product.active !== false,
+      stockMode: ["always", "manual", "quantity"].includes(product.stockMode)
+        ? product.stockMode
+        : "always",
+      available: product.available !== false,
+      remainingQuantity: Number.isInteger(product.remainingQuantity)
+        ? Math.max(0, product.remainingQuantity)
+        : null,
+      lowStock: product.lowStock === true,
       optionGroups: (product.optionGroups || product.product_option_groups || []).map((group) => ({
         id: String(group.id || ""),
         name: String(group.name || "Opções"),
@@ -359,11 +367,14 @@ function applyStoreDetails() {
 function reconcileCart() {
   const result = reconcileCartItems(state.cart, state.products, {
     maxLineQuantity: MAX_LINE_QUANTITY,
+    maxLines: MAX_LINES,
+    maxTotalUnits: MAX_TOTAL_UNITS,
     createUid: uuid
   });
   state.cart = result.cart;
   saveCart(state.cart);
   if (result.changed) {
+    resetCheckoutAttempt();
     toast("Alguns itens do carrinho foram atualizados ou removidos porque o cardápio mudou.", "warning");
   }
 }
@@ -392,15 +403,46 @@ function productVisual(product, className = "") {
     : `<span class="product-placeholder" aria-hidden="true">🍰</span>`;
 }
 
+function productIsAvailable(product) {
+  return product?.available !== false && (
+    product?.stockMode !== "quantity" ||
+    (Number.isInteger(product.remainingQuantity) && product.remainingQuantity > 0)
+  );
+}
+
+function cartUnitsForProduct(productId) {
+  return state.cart
+    .filter((item) => item.productId === productId)
+    .reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function productAddCapacity(product) {
+  const generalCapacity = Math.min(
+    MAX_LINE_QUANTITY,
+    Math.max(0, MAX_TOTAL_UNITS - totalUnits())
+  );
+  if (product.stockMode !== "quantity") return generalCapacity;
+  return Math.min(
+    generalCapacity,
+    Math.max(0, Number(product.remainingQuantity || 0) - cartUnitsForProduct(product.id))
+  );
+}
+
 function renderProducts() {
   const products = filteredProducts();
   els.feedback.innerHTML = "";
   els.grid.setAttribute("aria-busy", "false");
   els.grid.innerHTML = products.map((product) => {
-    const purchasable = Number.isInteger(product.priceCents);
-    return `<article class="product-card ${purchasable ? "" : "is-unavailable"}">
-      <button class="product-card__image" type="button" data-open-product="${escapeHtml(product.id)}" aria-label="Ver ${escapeHtml(product.name)}">${product.featured ? `<span class="product-card__badge">Destaque</span>` : ""}${productVisual(product, "product-card__photo")}</button>
-      <div class="product-card__body"><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p><div class="product-card__footer"><div class="product-card__price"><strong>${purchasable ? money(product.priceCents) : "Indisponível"}</strong><small>${purchasable ? "adicionais à parte" : "preço ainda não cadastrado"}</small></div><button class="product-card__add" type="button" data-open-product="${escapeHtml(product.id)}" ${purchasable ? "" : "disabled"}>${purchasable ? "Escolher +" : "Sem preço"}</button></div></div>
+    const hasPrice = Number.isInteger(product.priceCents);
+    const available = productIsAvailable(product);
+    const purchasable = hasPrice && available;
+    const stockNotice = product.stockMode === "quantity" && product.lowStock && available
+      ? `<strong class="product-card__stock">Últimas ${product.remainingQuantity} unidades</strong>`
+      : "";
+    const buttonLabel = !hasPrice ? "Sem preço" : !available ? "Esgotado" : "Escolher +";
+    return `<article class="product-card ${purchasable ? "" : "is-unavailable"} ${available ? "" : "is-sold-out"}">
+      <button class="product-card__image" type="button" data-open-product="${escapeHtml(product.id)}" aria-label="${available ? "Ver" : "Produto esgotado:"} ${escapeHtml(product.name)}" ${purchasable ? "" : "disabled aria-disabled=\"true\""}>${product.featured && available ? `<span class="product-card__badge">Destaque</span>` : ""}${!available ? `<span class="product-card__badge product-card__badge--sold-out">ESGOTADO HOJE</span>` : ""}${productVisual(product, "product-card__photo")}</button>
+      <div class="product-card__body"><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p>${stockNotice}<div class="product-card__footer"><div class="product-card__price"><strong>${hasPrice ? money(product.priceCents) : "Indisponível"}</strong><small>${hasPrice ? "adicionais à parte" : "preço ainda não cadastrado"}</small></div><button class="product-card__add" type="button" data-open-product="${escapeHtml(product.id)}" ${purchasable ? "" : "disabled aria-disabled=\"true\""}>${buttonLabel}</button></div></div>
     </article>`;
   }).join("");
   els.empty.hidden = products.length !== 0;
@@ -447,7 +489,11 @@ function updateProductPrice() {
 
 function openProduct(productId) {
   const product = state.products.get(String(productId));
-  if (!product || !Number.isInteger(product.priceCents)) return;
+  if (!product || !Number.isInteger(product.priceCents) || !productIsAvailable(product)) return;
+  if (productAddCapacity(product) < 1) {
+    toast("Você já adicionou ao carrinho toda a quantidade disponível deste produto.", "warning");
+    return;
+  }
   state.selectedProduct = product;
   state.selectedQty = 1;
   els.qtyValue.textContent = "1";
@@ -475,6 +521,9 @@ function addSelectedToCart(event) {
     const options = selectedOptions({ validate: true });
     if (state.cart.length >= MAX_LINES) throw new Error(`O pedido aceita até ${MAX_LINES} itens diferentes.`);
     if (totalUnits() + state.selectedQty > MAX_TOTAL_UNITS) throw new Error(`O pedido aceita até ${MAX_TOTAL_UNITS} unidades.`);
+    if (!productIsAvailable(product) || state.selectedQty > productAddCapacity(product)) {
+      throw new Error("A quantidade escolhida não está mais disponível.");
+    }
     state.cart.push({ uid: uuid(), productId: product.id, quantity: state.selectedQty, note: els.itemNote.value.trim(), options });
     saveCart(state.cart);
     resetCheckoutAttempt();
@@ -531,6 +580,11 @@ function changeCartQuantity(uid, delta) {
   if (!item) return;
   if (delta > 0 && (item.quantity >= MAX_LINE_QUANTITY || totalUnits() >= MAX_TOTAL_UNITS)) {
     toast("Limite de unidades atingido.", "warning");
+    return;
+  }
+  const product = state.products.get(item.productId);
+  if (delta > 0 && (!product || !productIsAvailable(product) || productAddCapacity(product) < 1)) {
+    toast("Quantidade disponível deste produto atingida.", "warning");
     return;
   }
   item.quantity += delta;
@@ -823,6 +877,9 @@ async function submitCheckout(event) {
     configureCheckout();
   } catch (error) {
     setError(els.checkoutError, error.message);
+    if (error instanceof ApiError && error.status === 409) {
+      await loadCatalog();
+    }
     els.checkoutError.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } finally {
     setButtonBusy(els.submitOrderBtn, false);
@@ -1017,7 +1074,16 @@ function wireEvents() {
     updateProductPrice();
   });
   els.qtyMinus.addEventListener("click", () => { state.selectedQty = Math.max(1, state.selectedQty - 1); els.qtyValue.textContent = state.selectedQty; updateProductPrice(); });
-  els.qtyPlus.addEventListener("click", () => { state.selectedQty = Math.min(MAX_LINE_QUANTITY, state.selectedQty + 1); els.qtyValue.textContent = state.selectedQty; updateProductPrice(); });
+  els.qtyPlus.addEventListener("click", () => {
+    const limit = state.selectedProduct ? productAddCapacity(state.selectedProduct) : MAX_LINE_QUANTITY;
+    if (state.selectedQty >= limit) {
+      toast("Quantidade disponível deste produto atingida.", "warning");
+      return;
+    }
+    state.selectedQty = Math.min(MAX_LINE_QUANTITY, limit, state.selectedQty + 1);
+    els.qtyValue.textContent = state.selectedQty;
+    updateProductPrice();
+  });
   $$(".cart-trigger").forEach((button) => button.addEventListener("click", openCart));
   $$('[data-close-dialog="cartDrawer"]').forEach((button) => button.addEventListener("click", () => closeDialog(els.cartDrawer)));
   els.cartList.addEventListener("click", (event) => {
