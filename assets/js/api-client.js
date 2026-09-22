@@ -124,6 +124,10 @@ export const api = {
     return apiFetch(`/public/orders/${encodeURIComponent(trackingToken)}`);
   },
 
+  getMyOrders(storeSlug) {
+    return apiFetch(`/public/my-orders?storeSlug=${encodeURIComponent(storeSlug)}`);
+  },
+
   login(input) {
     return jsonRequest("/admin/auth/login", "POST", input);
   },

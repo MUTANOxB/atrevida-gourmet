@@ -48,6 +48,19 @@ export async function registerRouteLimits(app: FastifyInstance) {
       };
     }
 
+    if (
+      routeOptions.method === "GET" &&
+      (url === "/api/public/my-orders" || url === "/api/public/my-orders/events")
+    ) {
+      routeOptions.config = {
+        ...routeOptions.config,
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute"
+        }
+      };
+    }
+
     // Admin: limite conservador.
     if (url.startsWith("/api/admin/")) {
       routeOptions.config = {

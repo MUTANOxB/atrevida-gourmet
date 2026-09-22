@@ -46,6 +46,35 @@ test("migration de pagamentos é aditiva e protege o aceite de Pix não aprovado
   assert.doesNotMatch(migration, /drop\s+table|truncate\s+table/i);
 });
 
+test("migration de sessões públicas mantém tokens protegidos e isolamento multi-loja", () => {
+  const files = readdirSync(migrationsRoot)
+    .filter((name) => name.endsWith("_add_public_order_sessions.sql"));
+  assert.equal(files.length, 1);
+  const migration = readFileSync(
+    new URL(`../supabase/migrations/${files[0]}`, import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /create table public\.public_order_sessions/i);
+  assert.match(migration, /token_hash text not null unique/i);
+  assert.match(migration, /token_hash\s*~\s*'\^\[0-9a-f\]\{64\}\$'/i);
+  assert.match(migration, /create index public_order_sessions_expires_at_idx[\s\S]*?\(expires_at\)/i);
+  assert.match(migration, /primary key \(session_id, order_id\)/i);
+  assert.match(migration, /foreign key \(session_id\)[\s\S]*?on delete cascade/i);
+  assert.match(migration, /foreign key \(order_id, store_id\)[\s\S]*?references public\.orders\(id, store_id\)[\s\S]*?on delete cascade/i);
+  assert.match(migration, /public_order_session_orders_session_store_created_idx[\s\S]*?\(session_id, store_id, created_at desc\)/i);
+  assert.match(migration, /public_order_session_orders_order_store_idx[\s\S]*?\(order_id, store_id\)/i);
+
+  for (const table of ["public_order_sessions", "public_order_session_orders"]) {
+    assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`, "i"));
+    assert.match(migration, new RegExp(`revoke all on table public\\.${table} from public, anon, authenticated`, "i"));
+  }
+  assert.match(migration, /grant select, insert, update on table public\.public_order_sessions to service_role/i);
+  assert.match(migration, /grant select, insert on table public\.public_order_session_orders to service_role/i);
+  assert.doesNotMatch(migration, /grant\s+[^;]+\s+to\s+(?:anon|authenticated)/i);
+  assert.doesNotMatch(migration, /create\s+policy/i);
+});
+
 test("seed comercial mantém somente as categorias confirmadas da Atrevida", () => {
   const seed = readFileSync(seedPath, "utf8");
   const categoryBlock = seed.match(

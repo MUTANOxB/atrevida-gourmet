@@ -98,3 +98,7 @@ export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export const trackOrderParams = z.object({
   trackingToken: z.string().uuid()
 }).strict();
+
+export const myOrdersQuery = z.object({
+  storeSlug: z.string().trim().min(1).max(80).regex(/^[a-z0-9-]+$/)
+}).strict();

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 process.env.NODE_ENV = "test";
@@ -13,8 +14,12 @@ const storeId = "11111111-1111-4111-8111-111111111111";
 const otherStoreId = "22222222-2222-4222-8222-222222222222";
 const orderId = "33333333-3333-4333-8333-333333333333";
 const otherOrderId = "44444444-4444-4444-8444-444444444444";
+const sameStoreOtherSessionOrderId = "45454545-4545-4454-8454-454545454545";
 const trackingToken = "55555555-5555-4555-8555-555555555555";
 const otherTrackingToken = "66666666-6666-4666-8666-666666666666";
+const publicSessionId = "88888888-8888-4888-8888-888888888888";
+const publicSessionToken = Buffer.alloc(32, 7).toString("base64url");
+const publicSessionHash = createHash("sha256").update(publicSessionToken).digest("hex");
 let membershipRole: "owner" | "manager" | "staff" = "manager";
 
 globalThis.fetch = (async (input, init) => {
@@ -39,6 +44,25 @@ globalThis.fetch = (async (input, init) => {
       role: membershipRole,
       stores: { slug: "atrevida-gourmet" }
     });
+  }
+  if (url.pathname.endsWith("/rest/v1/public_order_sessions")) {
+    if (method === "PATCH") return jsonResponse([]);
+    const hash = (url.searchParams.get("token_hash") ?? "").replace(/^eq\./, "");
+    return jsonResponse(hash === publicSessionHash ? {
+      id: publicSessionId,
+      expires_at: "2099-01-01T00:00:00.000Z"
+    } : null);
+  }
+  if (url.pathname.endsWith("/rest/v1/stores")) {
+    const slug = (url.searchParams.get("slug") ?? "").replace(/^eq\./, "");
+    return jsonResponse(slug === "atrevida-gourmet" ? { id: storeId } : { id: otherStoreId });
+  }
+  if (url.pathname.endsWith("/rest/v1/public_order_session_orders")) {
+    const session = (url.searchParams.get("session_id") ?? "").replace(/^eq\./, "");
+    const store = (url.searchParams.get("store_id") ?? "").replace(/^eq\./, "");
+    return jsonResponse(session === publicSessionId && store === storeId
+      ? [{ order_id: orderId, created_at: "2026-09-22T12:00:00.000Z" }]
+      : []);
   }
   if (url.pathname.endsWith("/rest/v1/orders")) {
     const filter = url.searchParams.get("tracking_token") ?? "";
@@ -261,6 +285,55 @@ test("mudanca de status chega somente ao tracking autorizado", async (context) =
   const content = await readUntil(reader, (value) => value.includes('"status":"confirmed"'));
   assert.match(content, /"type":"order.status"/);
   assert.equal(content.includes("cancelled"), false);
+  assert.equal(content.includes(orderId), false);
+  assert.equal(content.includes(storeId), false);
+  assert.equal(content.includes(trackingToken), false);
+  await closeStream(controller, reader);
+});
+
+test("stream da sessão recebe somente eventos dos pedidos vinculados na loja", async (context) => {
+  const events = new OrderEventBus();
+  const app = await buildApp({ serveStatic: false, orderEvents: events });
+  const baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  context.after(() => app.close());
+  const controller = new AbortController();
+  const response = await nativeFetch(
+    `${baseUrl}/api/public/my-orders/events?storeSlug=atrevida-gourmet`,
+    {
+      headers: { cookie: `atrevida_order_session=${publicSessionToken}` },
+      signal: controller.signal
+    }
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store, no-transform");
+  const reader = response.body!.getReader();
+
+  events.publish({
+    type: "order.status",
+    orderId: otherOrderId,
+    storeId: otherStoreId,
+    trackingToken: otherTrackingToken,
+    status: "cancelled"
+  });
+  events.publish({
+    type: "order.status",
+    orderId: sameStoreOtherSessionOrderId,
+    storeId,
+    trackingToken: otherTrackingToken,
+    status: "ready"
+  });
+  events.publish({
+    type: "order.status",
+    orderId,
+    storeId,
+    trackingToken,
+    status: "confirmed"
+  });
+
+  const content = await readUntil(reader, (value) => value.includes('"status":"confirmed"'));
+  assert.match(content, /"type":"order.status"/);
+  assert.equal(content.includes("cancelled"), false);
+  assert.equal(content.includes("ready"), false);
   assert.equal(content.includes(orderId), false);
   assert.equal(content.includes(storeId), false);
   assert.equal(content.includes(trackingToken), false);

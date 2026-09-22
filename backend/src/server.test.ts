@@ -250,6 +250,8 @@ test("tracking rejeita token malformado antes de consultar o banco", async (cont
 
 test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context) => {
   const storeId = "22222222-2222-4222-8222-222222222222";
+  const otherStoreId = "21212121-2121-4212-8212-212121212121";
+  const sessionId = "23232323-2323-4232-8232-232323232323";
   const categoryId = "33333333-3333-4333-8333-333333333333";
   const productId = "44444444-4444-4444-8444-444444444444";
   const zoneId = "55555555-5555-4555-8555-555555555555";
@@ -257,6 +259,11 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
   const calls: string[] = [];
   let storeOpen = true;
   let acceptsScheduledOrders = false;
+  let createdSessions = 0;
+  let createOrderCalls = 0;
+  const sessions = new Map<string, { id: string; expires_at: string }>();
+  const sessionLinks = new Set<string>();
+  const idempotencyRecords = new Map<string, Record<string, any>>();
   const hours = Array.from({ length: 7 }, (_, day) => ({
     day_of_week: day,
     opens_at: "00:00:00",
@@ -280,10 +287,47 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
 
   supabaseFetchHandler = (url, method, body) => {
     const table = url.pathname.split("/").at(-1) ?? "";
+    const input = Array.isArray(body) ? body[0] : body as Record<string, any> | null;
     calls.push(`${method} ${table}`);
+
+    if (table === "public_order_sessions") {
+      if (method === "GET") {
+        const tokenHash = (url.searchParams.get("token_hash") ?? "").replace(/^eq\./, "");
+        return jsonResponse(sessions.get(tokenHash) ?? null);
+      }
+      if (method === "POST") {
+        createdSessions += 1;
+        const id = createdSessions === 1
+          ? sessionId
+          : `24242424-2424-4242-8242-${String(createdSessions).padStart(12, "0")}`;
+        sessions.set(String(input!.token_hash), { id, expires_at: String(input!.expires_at) });
+        return jsonResponse({ id }, 201);
+      }
+      if (method === "PATCH") return jsonResponse([]);
+    }
+
+    if (table === "public_order_session_orders") {
+      if (method === "POST") {
+        sessionLinks.add(`${input!.session_id}:${input!.order_id}:${input!.store_id}`);
+        return jsonResponse(null, 201);
+      }
+      if (method === "GET") {
+        const requestedSession = (url.searchParams.get("session_id") ?? "").replace(/^eq\./, "");
+        const requestedStore = (url.searchParams.get("store_id") ?? "").replace(/^eq\./, "");
+        const links = [...sessionLinks]
+          .map((value) => value.split(":"))
+          .filter(([linkedSession, , linkedStore]) => linkedSession === requestedSession && linkedStore === requestedStore)
+          .map(([, orderId]) => ({ order_id: orderId, created_at: "2026-09-16T10:00:00.000Z" }));
+        return jsonResponse(links);
+      }
+    }
 
     if (table === "stores") {
       const select = url.searchParams.get("select") ?? "";
+      const requestedSlug = (url.searchParams.get("slug") ?? "").replace(/^eq\./, "");
+      if (select === "id") {
+        return jsonResponse({ id: requestedSlug === "outra-loja" ? otherStoreId : storeId });
+      }
       if (select.includes("categories(") && select.includes("products!products_category_same_store_fkey(")) {
         return jsonResponse({
           slug: "atrevida-gourmet",
@@ -359,8 +403,17 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
       return jsonResponse([{ id: zoneId, name: "Centro", fee_cents: 500, minimum_order_cents: 0 }]);
     }
     if (table === "idempotency_keys") {
-      if (method === "GET") return jsonResponse(null);
-      return jsonResponse([]);
+      const key = (url.searchParams.get("key") ?? "").replace(/^eq\./, "") || String(input?.key ?? "");
+      if (method === "DELETE") return jsonResponse([]);
+      if (method === "GET") return jsonResponse(idempotencyRecords.get(key) ?? null);
+      if (method === "POST") {
+        idempotencyRecords.set(key, { ...input });
+        return jsonResponse(null, 201);
+      }
+      if (method === "PATCH") {
+        idempotencyRecords.set(key, { ...idempotencyRecords.get(key), ...input });
+        return jsonResponse([]);
+      }
     }
     if (table === "store_hours") return jsonResponse(hours);
     if (table === "store_schedule_exceptions") return jsonResponse([]);
@@ -380,12 +433,13 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
       }]);
     }
     if (table === "create_order_with_items" && method === "POST") {
+      createOrderCalls += 1;
       assert.equal((body as any).order_payload.subtotal_cents, 1200);
       assert.equal((body as any).order_payload.total_cents, 1200);
       return jsonResponse([createdOrder]);
     }
     if (table === "orders") {
-      return jsonResponse({
+      const row = {
         ...createdOrder,
         accepted_at: null,
         ready_at: null,
@@ -399,7 +453,8 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
           line_total_cents: 1200,
           options_snapshot: []
         }]
-      });
+      };
+      return jsonResponse((url.searchParams.get("id") ?? "").startsWith("in.") ? [row] : row);
     }
     return jsonResponse({ message: `Unexpected ${method} ${url.pathname}` }, 500);
   };
@@ -426,23 +481,91 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
   assert.equal(quote.statusCode, 200);
   assert.equal(quote.json().feeCents, 500);
 
+  const checkoutPayload = {
+    storeSlug: "atrevida-gourmet",
+    fulfillmentType: "pickup",
+    customer: { name: "Cliente Teste", phone: "14999999999" },
+    paymentMethod: "pix",
+    items: [{ productId, quantity: 2, options: [] }]
+  };
   const checkout = await app.inject({
     method: "POST",
     url: "/api/public/orders",
     headers: { "idempotency-key": "88888888-8888-4888-8888-888888888888" },
-    payload: {
-      storeSlug: "atrevida-gourmet",
-      fulfillmentType: "pickup",
-      customer: { name: "Cliente Teste", phone: "14999999999" },
-      paymentMethod: "pix",
-      items: [{ productId, quantity: 2, options: [] }]
-    }
+    payload: checkoutPayload
   });
   assert.equal(checkout.statusCode, 201, checkout.body);
   assert.equal(checkout.json().trackingToken, trackingToken);
   assert.equal(checkout.json().totalCents, 1200);
   assert.equal(checkout.json().paymentStatus, "pending");
   assert.match(checkout.json().pix.copyPaste, /^00020126/);
+  const sessionCookie = (Array.isArray(checkout.headers["set-cookie"])
+    ? checkout.headers["set-cookie"]
+    : [String(checkout.headers["set-cookie"] ?? "")]
+  ).find((value) => value.startsWith("atrevida_order_session="));
+  assert.ok(sessionCookie);
+  assert.match(sessionCookie, /HttpOnly/i);
+  assert.match(sessionCookie, /Path=\/api\/public/i);
+  assert.match(sessionCookie, /SameSite=Strict/i);
+  assert.match(sessionCookie, /Max-Age=2592000/i);
+  const cookieHeader = sessionCookie!.split(";", 1)[0];
+
+  const replay = await app.inject({
+    method: "POST",
+    url: "/api/public/orders",
+    headers: {
+      cookie: cookieHeader,
+      "idempotency-key": "88888888-8888-4888-8888-888888888888"
+    },
+    payload: checkoutPayload
+  });
+  assert.equal(replay.statusCode, 201, replay.body);
+  assert.equal(replay.headers["idempotency-replayed"], "true");
+  assert.equal(createOrderCalls, 1);
+  assert.equal(sessionLinks.size, 1);
+
+  const myOrders = await app.inject({
+    method: "GET",
+    url: "/api/public/my-orders?storeSlug=atrevida-gourmet",
+    headers: { cookie: cookieHeader }
+  });
+  assert.equal(myOrders.statusCode, 200, myOrders.body);
+  assert.equal(myOrders.headers["cache-control"], "no-store");
+  assert.deepEqual(myOrders.json().orders.map((order: any) => order.orderNumber), ["AG-TEST-001"]);
+  const myOrdersBody = myOrders.body;
+  for (const forbidden of ["trackingToken", "tracking_token", "customer_phone", "delivery_street", "session_id", "token_hash"]) {
+    assert.equal(myOrdersBody.includes(forbidden), false, forbidden);
+  }
+
+  const anonymousOrders = await app.inject({
+    method: "GET",
+    url: "/api/public/my-orders?storeSlug=atrevida-gourmet"
+  });
+  assert.equal(anonymousOrders.statusCode, 200, anonymousOrders.body);
+  assert.deepEqual(anonymousOrders.json(), { orders: [] });
+
+  const unknownCookieToken = Buffer.alloc(32, 9).toString("base64url");
+  const invalidSessionOrders = await app.inject({
+    method: "GET",
+    url: "/api/public/my-orders?storeSlug=atrevida-gourmet",
+    headers: { cookie: `atrevida_order_session=${unknownCookieToken}` }
+  });
+  assert.equal(invalidSessionOrders.statusCode, 200, invalidSessionOrders.body);
+  assert.deepEqual(invalidSessionOrders.json(), { orders: [] });
+  const rotatedCookies = Array.isArray(invalidSessionOrders.headers["set-cookie"])
+    ? invalidSessionOrders.headers["set-cookie"]
+    : [String(invalidSessionOrders.headers["set-cookie"] ?? "")];
+  assert.ok(rotatedCookies.some((value) =>
+    /^atrevida_order_session=[A-Za-z0-9_-]{43};/.test(value) &&
+    !value.includes(unknownCookieToken)
+  ));
+
+  const otherStoreOrders = await app.inject({
+    method: "GET",
+    url: "/api/public/my-orders?storeSlug=outra-loja",
+    headers: { cookie: cookieHeader }
+  });
+  assert.deepEqual(otherStoreOrders.json(), { orders: [] });
 
   storeOpen = false;
   const closedCheckout = await app.inject({

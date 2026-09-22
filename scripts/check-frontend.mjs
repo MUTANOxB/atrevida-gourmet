@@ -359,8 +359,34 @@ if (publicApp.includes("orderTimeline") || publicApp.includes("trackingForm")) {
 if (/trackingToken|Código de acompanhamento|Cole o código/i.test(publicHtml)) {
   fail("A interface pública não deve expor token ou código manual de tracking.");
 }
-if (!publicApp.includes("message: () => refreshTrackedOrder(token")) {
-  fail("Eventos públicos devem atualizar o tracking sem refresh manual.");
+const submitCheckoutBlock = functionBlock(publicApp, "submitCheckout", "normalizeTracking");
+if (
+  submitCheckoutBlock.includes("saveTrackedOrders") ||
+  /(?:localStorage|sessionStorage)\.(?:setItem|getItem)/.test(submitCheckoutBlock)
+) {
+  fail("Pedido novo não pode persistir trackingToken em Web Storage.");
+}
+if (!publicApp.includes("saveTrackedOrders(state.legacyTrackedOrders)")) {
+  fail("sessionStorage deve permanecer restrito à compatibilidade de pedidos legados.");
+}
+if (/localStorage\.(?:getItem|setItem)\(TRACKING_KEY/.test(storagePolicy)) {
+  fail("Tracking token não pode ser persistido em localStorage.");
+}
+if (!apiClient.includes("getMyOrders(storeSlug)") || !apiClient.includes("/public/my-orders?storeSlug=")) {
+  fail("Meus pedidos deve carregar pela API persistente.");
+}
+if (!publicApp.includes("Carregando seus pedidos…") || !publicApp.includes("api.getMyOrders(STORE_SLUG)")) {
+  fail("Meus pedidos deve exibir carregamento antes de consultar a API.");
+}
+if (!publicApp.includes("window.setInterval") || !publicApp.includes("TRACKING_POLL_INTERVAL_MS")) {
+  fail("O polling conservador deve permanecer como fallback.");
+}
+if (
+  !publicApp.includes("/public/my-orders/events?storeSlug=") ||
+  !publicApp.includes("message: () => refreshAllTrackedOrders({ silent: true })") ||
+  publicApp.includes("openApiEventStream(`/public/orders/${encodeURIComponent(token)}/events`")
+) {
+  fail("O tracking deve usar uma única stream SSE vinculada à sessão pública.");
 }
 if (!apiClient.includes("new EventSource(apiUrl(path)")) {
   fail("As streams devem usar somente endpoints /api do backend.");

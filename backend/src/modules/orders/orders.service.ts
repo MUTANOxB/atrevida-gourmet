@@ -203,7 +203,13 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
     storeId: store.id
   });
   if (reservation.kind === "replay") {
-    return { statusCode: reservation.statusCode, body: reservation.body, replay: true };
+    return {
+      statusCode: reservation.statusCode,
+      body: reservation.body,
+      replay: true,
+      orderId: reservation.orderId,
+      storeId: store.id
+    };
   }
 
   let orderCreated = false;
@@ -315,7 +321,13 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
     order.payment_method ??= input.paymentMethod;
     const body = orderResponse(order, store as StoreRow);
     await completeIdempotency(idempotencyKey, store.id, order.id, 201, body);
-    return { statusCode: 201, body, replay: false };
+    return {
+      statusCode: 201,
+      body,
+      replay: false,
+      orderId: order.id as string,
+      storeId: store.id as string
+    };
   } catch (error) {
     if (!orderCreated) await releaseIdempotency(idempotencyKey, store.id);
     throw error;

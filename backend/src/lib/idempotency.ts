@@ -23,7 +23,7 @@ export function hashIdempotentPayload(value: unknown) {
 
 export type IdempotencyReservation =
   | { kind: "reserved" }
-  | { kind: "replay"; statusCode: number; body: unknown };
+  | { kind: "replay"; statusCode: number; body: unknown; orderId: string };
 
 export async function reserveIdempotency(input: {
   key: string;
@@ -53,11 +53,12 @@ export async function reserveIdempotency(input: {
     if (existing.request_hash !== input.requestHash || existing.store_id !== input.storeId) {
       throw new HttpError(409, "Idempotency-Key reutilizada com outro conteúdo.");
     }
-    if (existing.completed_at && existing.response_body) {
+    if (existing.completed_at && existing.response_body && existing.order_id) {
       return {
         kind: "replay",
         statusCode: existing.response_status ?? 201,
-        body: existing.response_body
+        body: existing.response_body,
+        orderId: existing.order_id
       };
     }
     if (existing.order_id) {
@@ -90,11 +91,12 @@ export async function reserveIdempotency(input: {
     if (raced?.request_hash !== input.requestHash || raced?.store_id !== input.storeId) {
       throw new HttpError(409, "Idempotency-Key reutilizada com outro conteúdo.");
     }
-    if (raced?.completed_at && raced.response_body) {
+    if (raced?.completed_at && raced.response_body && raced.order_id) {
       return {
         kind: "replay",
         statusCode: raced.response_status ?? 201,
-        body: raced.response_body
+        body: raced.response_body,
+        orderId: raced.order_id
       };
     }
     if (raced?.order_id) {
@@ -158,7 +160,7 @@ async function recoverOrderResponse(
     completed_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   }).eq("key", key).eq("store_id", storeId);
-  return { kind: "replay", statusCode: 201, body };
+  return { kind: "replay", statusCode: 201, body, orderId: data.id };
 }
 
 export async function completeIdempotency(

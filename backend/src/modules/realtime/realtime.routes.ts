@@ -4,6 +4,12 @@ import { HttpError } from "../../lib/errors.js";
 import { supabaseAdmin } from "../../lib/supabase.js";
 import { requireAdmin } from "../../middleware/admin-auth.js";
 import { noStore } from "../../middleware/no-store.js";
+import { myOrdersQuery } from "../orders/orders.schemas.js";
+import {
+  listPublicSessionOrderIds,
+  resolvePublicOrderSession,
+  resolvePublicStoreId
+} from "../orders/public-order-session.service.js";
 import type { OrderEventBus, OrderRealtimeEvent } from "./order-events.js";
 import { openSse, SseConnectionLimiter } from "./sse.js";
 
@@ -78,6 +84,39 @@ export async function realtimeRoutes(
           orderId: event.orderId,
           status: event.status
         });
+      });
+      stream.addCleanup(stop);
+      stream.send({ type: "connected" });
+    }
+  );
+
+  app.get(
+    "/api/public/my-orders/events",
+    { preHandler: [noStore] },
+    async (request, reply) => {
+      const { storeSlug } = myOrdersQuery.parse(request.query);
+      const session = await resolvePublicOrderSession(request, reply);
+      const storeId = await resolvePublicStoreId(storeSlug);
+      const orderIds = new Set(
+        await listPublicSessionOrderIds(session.id, storeId)
+      );
+      const release = acquireConnection(request, connections);
+      try {
+        await options.events.ensureStarted();
+      } catch (error) {
+        release();
+        request.log.error({ err: error }, "Could not start public session realtime stream");
+        throw new HttpError(503, "Atualização em tempo real indisponível.");
+      }
+
+      const stream = openSse(reply, {
+        heartbeatMs: options.heartbeatMs,
+        maxDurationMs: options.maxDurationMs,
+        onClose: release
+      });
+      const stop = options.events.listen((event) => {
+        if (event.storeId !== storeId || !orderIds.has(event.orderId)) return;
+        stream.send(publicEvent(event));
       });
       stream.addCleanup(stop);
       stream.send({ type: "connected" });

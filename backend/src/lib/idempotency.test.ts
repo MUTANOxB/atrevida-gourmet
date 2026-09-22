@@ -77,9 +77,10 @@ test("replay devolve a mesma resposta e rejeita conteudo diferente", async () =>
   assert.deepEqual(first, { kind: "reserved" });
 
   const body = { orderNumber: "AG-001", trackingToken: "token" };
-  await completeIdempotency(key, storeA, "44444444-4444-4444-8444-444444444444", 201, body);
+  const orderId = "44444444-4444-4444-8444-444444444444";
+  await completeIdempotency(key, storeA, orderId, 201, body);
   const replay = await reserveIdempotency({ key, storeId: storeA, requestHash: "hash-a" });
-  assert.deepEqual(replay, { kind: "replay", statusCode: 201, body });
+  assert.deepEqual(replay, { kind: "replay", statusCode: 201, body, orderId });
 
   await assert.rejects(
     reserveIdempotency({ key, storeId: storeA, requestHash: "hash-adulterado" }),

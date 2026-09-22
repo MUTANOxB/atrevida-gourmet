@@ -41,9 +41,13 @@ const state = {
   quote: null,
   quoteFingerprint: "",
   checkoutKey: null,
-  trackedOrders: loadTrackedOrders(),
+  trackedOrders: [],
+  persistentOrders: [],
+  legacyTrackedOrders: loadTrackedOrders(),
+  recentOrderFallback: null,
+  ordersLoadError: "",
   trackingPoll: null,
-  trackingStreams: new Map(),
+  trackingStream: null,
   toastTimer: null
 };
 
@@ -791,10 +795,13 @@ async function submitCheckout(event) {
     state.checkoutKey ||= uuid();
     setButtonBusy(els.submitOrderBtn, true);
     const order = await api.createOrder(payload, state.checkoutKey);
-    const tracked = { trackingToken: String(order.trackingToken), orderNumber: String(order.orderNumber), last: order };
-    state.trackedOrders = [tracked, ...state.trackedOrders.filter((item) => item.trackingToken !== tracked.trackingToken)].slice(0, 10);
-    saveTrackedOrders(state.trackedOrders);
-    startTrackingUpdates();
+    state.recentOrderFallback = {
+      trackingToken: String(order.trackingToken || ""),
+      orderNumber: String(order.orderNumber),
+      last: normalizeTracking(order)
+    };
+    mergeTrackedOrders();
+    void refreshAllTrackedOrders({ silent: true });
     state.cart = [];
     saveCart(state.cart);
     renderCart();
@@ -850,9 +857,32 @@ function orderStatusMessage(order) {
   return messages[order.status] || "Consulte a loja para saber mais sobre este pedido.";
 }
 
+function mergeTrackedOrders() {
+  const seen = new Set();
+  state.trackedOrders = [
+    ...state.persistentOrders,
+    ...(state.recentOrderFallback ? [state.recentOrderFallback] : []),
+    ...state.legacyTrackedOrders
+  ].filter((entry) => {
+    const orderNumber = String(entry.orderNumber || entry.last?.orderNumber || "");
+    const key = orderNumber || (entry.trackingToken ? `legacy:${entry.trackingToken}` : "");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 10);
+}
+
+function renderTrackedOrdersLoading() {
+  els.ordersList.innerHTML = `<div class="empty-state" aria-live="polite"><div aria-hidden="true">🧾</div><strong>Carregando seus pedidos…</strong><span>Aguarde um instante.</span></div>`;
+}
+
 function renderTrackedOrders() {
+  if (!state.trackedOrders.length && state.ordersLoadError) {
+    els.ordersList.innerHTML = `<div class="inline-error"><strong>Não foi possível carregar seus pedidos.</strong><span>${escapeHtml(state.ordersLoadError)}</span></div>`;
+    return;
+  }
   if (!state.trackedOrders.length) {
-    els.ordersList.innerHTML = `<div class="empty-state"><div aria-hidden="true">🧾</div><strong>Nenhum pedido nesta sessão.</strong><span>Depois de finalizar, o acompanhamento aparece aqui.</span></div>`;
+    els.ordersList.innerHTML = `<div class="empty-state"><div aria-hidden="true">🧾</div><strong>Nenhum pedido recente.</strong><span>Depois de finalizar, o acompanhamento aparece aqui.</span></div>`;
     return;
   }
   els.ordersList.innerHTML = state.trackedOrders.map((entry) => {
@@ -863,74 +893,90 @@ function renderTrackedOrders() {
   }).join("");
 }
 
-async function refreshTrackedOrder(token, { silent = false } = {}) {
-  const entry = state.trackedOrders.find((item) => item.trackingToken === token);
-  if (!entry) return;
+async function refreshLegacyTrackedOrder(entry, { silent = false } = {}) {
   try {
-    entry.last = normalizeTracking(await api.trackOrder(token));
+    entry.last = normalizeTracking(await api.trackOrder(entry.trackingToken));
     entry.orderNumber = entry.last.orderNumber;
     delete entry.error;
   } catch (error) {
     if (!silent) entry.error = error.message;
   }
-  saveTrackedOrders(state.trackedOrders);
-  renderTrackedOrders();
-  if (TERMINAL_STATUSES.has(entry.last?.status)) {
-    state.trackingStreams.get(token)?.close();
-    state.trackingStreams.delete(token);
-  }
 }
 
 async function refreshAllTrackedOrders({ silent = false } = {}) {
-  const activeOrders = state.trackedOrders.filter((entry) => !TERMINAL_STATUSES.has(entry.last?.status));
-  await Promise.all(activeOrders.map((entry) => refreshTrackedOrder(entry.trackingToken, { silent })));
+  const persistentRequest = api.getMyOrders(STORE_SLUG);
+  const fallbackRequest = state.recentOrderFallback?.trackingToken
+    ? api.trackOrder(state.recentOrderFallback.trackingToken).then(
+        (value) => ({ status: "fulfilled", value }),
+        (reason) => ({ status: "rejected", reason })
+      )
+    : Promise.resolve(null);
+  const activeLegacy = state.legacyTrackedOrders.filter(
+    (entry) => entry.trackingToken && !TERMINAL_STATUSES.has(entry.last?.status)
+  );
+  const [persistentResult, , fallbackResult] = await Promise.all([
+    persistentRequest.then(
+      (value) => ({ status: "fulfilled", value }),
+      (reason) => ({ status: "rejected", reason })
+    ),
+    Promise.all(activeLegacy.map((entry) => refreshLegacyTrackedOrder(entry, { silent }))),
+    fallbackRequest
+  ]);
+
+  if (persistentResult.status === "fulfilled") {
+    const orders = Array.isArray(persistentResult.value?.orders)
+      ? persistentResult.value.orders
+      : [];
+    state.persistentOrders = orders.map((order) => ({
+      orderNumber: String(order.orderNumber || ""),
+      last: normalizeTracking(order)
+    }));
+    if (state.persistentOrders.some((entry) => entry.orderNumber === state.recentOrderFallback?.orderNumber)) {
+      state.recentOrderFallback = null;
+    }
+    state.ordersLoadError = "";
+  } else if (!silent) {
+    state.ordersLoadError = persistentResult.reason?.message || "Tente novamente em instantes.";
+  }
+  if (fallbackResult?.status === "fulfilled" && state.recentOrderFallback) {
+    state.recentOrderFallback.last = normalizeTracking(fallbackResult.value);
+    state.recentOrderFallback.orderNumber = state.recentOrderFallback.last.orderNumber;
+  }
+
+  saveTrackedOrders(state.legacyTrackedOrders);
+  mergeTrackedOrders();
+  renderTrackedOrders();
 }
 
 function stopTrackingUpdates() {
   window.clearInterval(state.trackingPoll);
   state.trackingPoll = null;
-  for (const stream of state.trackingStreams.values()) stream.close();
-  state.trackingStreams.clear();
+  state.trackingStream?.close();
+  state.trackingStream = null;
 }
 
-function syncTrackingStreams() {
-  const activeTokens = new Set(
-    state.trackedOrders
-      .filter((entry) => !TERMINAL_STATUSES.has(entry.last?.status))
-      .slice(0, 3)
-      .map((entry) => entry.trackingToken)
-  );
-  for (const [token, stream] of state.trackingStreams) {
-    if (!activeTokens.has(token)) {
-      stream.close();
-      state.trackingStreams.delete(token);
-    }
-  }
-  for (const token of activeTokens) {
-    if (state.trackingStreams.has(token)) continue;
-    const stream = openApiEventStream(`/public/orders/${encodeURIComponent(token)}/events`, {
-      message: () => refreshTrackedOrder(token, { silent: true }),
-      error: () => {
-        // EventSource reconecta automaticamente; polling permanece como fallback.
-      }
-    });
-    if (stream) state.trackingStreams.set(token, stream);
-  }
-}
-
-function startTrackingUpdates() {
+async function startTrackingUpdates({ showLoading = false } = {}) {
   stopTrackingUpdates();
-  refreshAllTrackedOrders();
+  if (showLoading) renderTrackedOrdersLoading();
+  await refreshAllTrackedOrders({ silent: !showLoading });
+  if (!els.ordersDrawer.open) return;
   state.trackingPoll = window.setInterval(() => {
     if (els.ordersDrawer.open && !document.hidden) refreshAllTrackedOrders({ silent: true });
   }, TRACKING_POLL_INTERVAL_MS);
-  syncTrackingStreams();
+  state.trackingStream = openApiEventStream(
+    `/public/my-orders/events?storeSlug=${encodeURIComponent(STORE_SLUG)}`,
+    {
+      message: () => refreshAllTrackedOrders({ silent: true }),
+      error: () => {
+        // EventSource reconecta automaticamente; polling permanece como fallback.
+      }
+    }
+  );
 }
 
 function openOrders() {
-  renderTrackedOrders();
   showDialog(els.ordersDrawer);
-  startTrackingUpdates();
+  void startTrackingUpdates({ showLoading: true });
 }
 
 function wireEvents() {
@@ -1030,6 +1076,6 @@ function wireEvents() {
 wireEvents();
 renderCatalogSkeleton();
 renderCart();
+mergeTrackedOrders();
 renderTrackedOrders();
 loadCatalog();
-if (state.trackedOrders.length) startTrackingUpdates();
