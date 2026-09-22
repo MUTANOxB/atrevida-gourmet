@@ -21,6 +21,20 @@ function fail(message) {
   process.exit(1);
 }
 
+function stringArrayConstant(source, name) {
+  const value = source.match(new RegExp(`const\\s+${name}\\s*=\\s*(\\[[^;]+\\])`))?.[1];
+  if (!value) fail(`Constante ${name} ausente.`);
+  try { return JSON.parse(value); }
+  catch { fail(`Constante ${name} deve ser um array literal simples.`); }
+}
+
+function functionBlock(source, name, nextName) {
+  const start = source.indexOf(`function ${name}`);
+  const end = source.indexOf(`function ${nextName}`, start + 1);
+  if (start < 0 || end < 0) fail(`Função ${name} ausente ou fora da ordem esperada.`);
+  return source.slice(start, end);
+}
+
 function collect(directory) {
   if (!fs.existsSync(directory)) return;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -77,6 +91,9 @@ for (const file of htmlFiles) {
       fail(`Mensagem de formulário sem role=alert: ${path.relative(root, file)}`);
     }
   }
+  if (file.includes(`${path.sep}admin${path.sep}`) && !/<meta\s+name=["']viewport["'][^>]*width=device-width/i.test(source)) {
+    fail(`Página administrativa sem viewport responsiva: ${path.relative(root, file)}`);
+  }
 }
 
 const loginHtml = fs.readFileSync(path.join(root, "admin", "login", "index.html"), "utf8");
@@ -109,6 +126,40 @@ if (!pollInterval || Number(pollInterval) < 60_000) fail("O polling de tracking 
 
 const adminApp = fs.readFileSync(path.join(root, "assets", "js", "admin.js"), "utf8");
 const productsAdminHtml = fs.readFileSync(path.join(root, "admin", "cardapio", "index.html"), "utf8");
+const activeStatusFlow = stringArrayConstant(adminApp, "ACTIVE_STATUS_FLOW");
+const completeStatusFlow = stringArrayConstant(adminApp, "STATUS_FLOW");
+const expectedActiveStatuses = ["pending", "confirmed", "preparing", "ready", "out_for_delivery"];
+if (JSON.stringify(activeStatusFlow) !== JSON.stringify(expectedActiveStatuses)) {
+  fail("O modo de pedidos ativos deve conter somente os cinco status operacionais ativos.");
+}
+if (JSON.stringify(completeStatusFlow) !== JSON.stringify([...expectedActiveStatuses, "completed", "cancelled"])) {
+  fail("O modo de pedidos recentes deve permitir todos os status operacionais.");
+}
+const visibleFlow = functionBlock(adminApp, "visibleStatusFlow", "primaryOrderAction");
+if (!/value\s*===\s*["']all["']\s*\?\s*STATUS_FLOW\s*:\s*ACTIVE_STATUS_FLOW/.test(visibleFlow)) {
+  fail("As colunas do Kanban devem respeitar o filtro active/all.");
+}
+const orderCard = functionBlock(adminApp, "renderOrderCard", "renderOrders");
+if (!/active\s*&&\s*order\.note\.trim\(\)/.test(orderCard) || !/escapeHtml\(order\.note\.trim\(\)\)/.test(orderCard)) {
+  fail("A observação geral ativa deve ser exibida completa e escapada no card.");
+}
+if (!/filter\(\(item\)\s*=>\s*item\.note\.trim\(\)\)/.test(orderCard) || !/escapeHtml\(item\.name\)/.test(orderCard) || !/escapeHtml\(item\.note\.trim\(\)\)/.test(orderCard)) {
+  fail("Observações de itens ativos devem ser filtradas e escapadas no card.");
+}
+if (!/const\s+active\s*=\s*ACTIVE_STATUS_FLOW\.includes\(order\.status\)/.test(orderCard) || !/const\s+generalNote\s*=\s*active/.test(orderCard) || !/const\s+itemNotes\s*=\s*active/.test(orderCard)) {
+  fail("Pedidos concluídos ou cancelados não devem exibir observações no card.");
+}
+const statusUpdate = adminApp.slice(
+  adminApp.indexOf("async function updateOrderStatus"),
+  adminApp.indexOf("async function confirmPix")
+);
+if (!/\[["']completed["'],\s*["']cancelled["']\]\.includes\(status\)/.test(statusUpdate) || !/orderWindow["']\)\.value\s*=\s*["']all["']/.test(statusUpdate)) {
+  fail("Concluir ou cancelar deve alternar automaticamente o filtro para todos os recentes.");
+}
+const orderDetails = functionBlock(adminApp, "openOrderDetails", "initOrders");
+if (!/escapeHtml\(order\.note\)/.test(orderDetails) || !/escapeHtml\(item\.note\)/.test(orderDetails)) {
+  fail("Os detalhes devem continuar exibindo observações gerais e dos itens.");
+}
 for (const contract of ["storeSlug: STORE_SLUG", "exceptionDate:", "isClosed:", "scheduledMinLeadMinutes", "scheduledMaxAdvanceDays"]) {
   if (!adminApp.includes(contract)) fail(`Contrato administrativo ausente: ${contract}`);
 }
@@ -159,6 +210,36 @@ if (!adminApp.includes("Confirmar Pix recebido") || !apiClient.includes("/paymen
 const adminCss = fs.readFileSync(path.join(root, "assets", "css", "admin.css"), "utf8");
 if (!adminCss.includes("user-select: none") || !adminCss.includes(".order-card__number") || !adminCss.includes("user-select: text")) {
   fail("A política de seleção do painel deve preservar dados copiáveis.");
+}
+if (!/@media\s*\(min-width:\s*1020px\)[\s\S]*?\.admin-shell\s*\{[^}]*grid-template-columns:\s*220px\s+minmax\(0,\s*1fr\)/.test(adminCss)) {
+  fail("O grid desktop deve reservar 220px e permitir que o conteúdo principal encolha.");
+}
+if (!/\.admin-main\s*\{[^}]*min-width:\s*0/.test(adminCss)) {
+  fail("O conteúdo principal deve permitir encolhimento dentro do grid.");
+}
+if (!/\.kanban-wrap\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/.test(adminCss)) {
+  fail("O scroll horizontal deve ficar contido no Kanban.");
+}
+if (!/\.kanban-column\s*\{[^}]*width:\s*min\(88vw,\s*330px\)[^}]*scroll-snap-align:\s*start/.test(adminCss)) {
+  fail("O Kanban mobile deve usar colunas largas horizontais com scroll-snap.");
+}
+const noteStyles = [
+  adminCss.match(/\.order-card__note\s*\{([^}]*)\}/)?.[1] ?? "",
+  adminCss.match(/\.order-card__note p,\s*\.order-card__note ul\s*\{([^}]*)\}/)?.[1] ?? "",
+].join("\n");
+if (!/overflow-wrap:\s*anywhere/.test(noteStyles) || /(?:line-clamp|text-overflow:\s*ellipsis)/.test(noteStyles)) {
+  fail("Observações no card devem quebrar linha sem truncamento.");
+}
+if (!/@media\s*\(min-width:\s*600px\)\s*and\s*\(max-width:\s*1019px\)[\s\S]*?\.kanban-column\s*\{[^}]*width:\s*320px/.test(adminCss)) {
+  fail("O painel deve ter um comportamento intermediário específico para tablets.");
+}
+const kanbanRule = adminCss.match(/\.kanban\s*\{([^}]*)\}/)?.[1] ?? "";
+if (/grid-template-columns:\s*repeat\(/.test(kanbanRule)) {
+  fail("O Kanban não pode impor todas as colunas simultaneamente à viewport.");
+}
+for (const selector of ["admin-shell", "admin-main"]) {
+  const rule = adminCss.match(new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  if (/min-width:\s*\d+px/.test(rule)) fail(`${selector} não pode impor largura mínima de desktop.`);
 }
 
 if (!publicApp.includes("function orderStatusMessage(order)")) {

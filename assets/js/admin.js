@@ -32,6 +32,7 @@ const STATUS_LABELS = {
   cancelled: "Pedidos cancelados"
 };
 const STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed", "cancelled"];
+const ACTIVE_STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery"];
 const FULFILLMENT_LABELS = { delivery: "Entrega", pickup: "Retirada", scheduled: "Encomenda" };
 const PAYMENT_LABELS = { pix: "Pix", cash: "Dinheiro", card_on_delivery: "Cartão no recebimento" };
 const PAYMENT_STATUS_LABELS = {
@@ -312,9 +313,13 @@ function filteredOrders() {
   const term = normalizeText($("#orderSearch")?.value || "");
   const activeOnly = $("#orderWindow")?.value !== "all";
   return state.orders.filter((order) => {
-    if (activeOnly && ["completed", "cancelled"].includes(order.status)) return false;
+    if (activeOnly && !ACTIVE_STATUS_FLOW.includes(order.status)) return false;
     return !term || normalizeText(`${order.orderNumber} ${order.customerName} ${order.customerPhone}`).includes(term);
   });
+}
+
+function visibleStatusFlow() {
+  return $("#orderWindow")?.value === "all" ? STATUS_FLOW : ACTIVE_STATUS_FLOW;
 }
 
 function primaryOrderAction(order) {
@@ -340,7 +345,18 @@ function primaryOrderAction(order) {
 function renderOrderCard(order) {
   const primaryAction = primaryOrderAction(order);
   const scheduled = order.scheduledFor ? `<span class="tag">📅 ${escapeHtml(dateTime(order.scheduledFor))}</span>` : "";
-  const active = !["completed", "cancelled"].includes(order.status);
+  const active = ACTIVE_STATUS_FLOW.includes(order.status);
+  const generalNote = active && order.note.trim()
+    ? `<div class="order-card__note"><strong>⚠ Observação</strong><p>${escapeHtml(order.note.trim())}</p></div>`
+    : "";
+  const itemNotes = active
+    ? order.items.filter((item) => item.note.trim()).map((item) =>
+        `<li><strong>${escapeHtml(item.name)}:</strong> ${escapeHtml(item.note.trim())}</li>`
+      ).join("")
+    : "";
+  const itemNotesBlock = itemNotes
+    ? `<div class="order-card__note order-card__note--items"><strong>Observações dos itens</strong><ul>${itemNotes}</ul></div>`
+    : "";
   const actions = [
     order.paymentProvider === "direct_pix" && order.paymentStatus === "pending"
       ? `<button class="btn btn--primary" type="button" data-confirm-pix="${escapeHtml(order.id)}">Confirmar Pix recebido</button>`
@@ -348,16 +364,24 @@ function renderOrderCard(order) {
     primaryAction ? `<button class="btn btn--primary" type="button" data-order-status="${primaryAction.status}" data-order-id="${escapeHtml(order.id)}">${escapeHtml(primaryAction.label)}</button>` : "",
     active ? `<button class="btn btn--danger" type="button" data-order-status="cancelled" data-order-id="${escapeHtml(order.id)}">Cancelar pedido</button>` : ""
   ].filter(Boolean).join("");
-  return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">Pedido #${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div><div class="order-card__payment"><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong><span>${escapeHtml(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</span></div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
+  return `<article class="order-card ${state.newOrderIds.has(order.id) ? "is-new" : ""}"><div class="order-card__top"><button class="order-card__number" type="button" data-order-details="${escapeHtml(order.id)}" aria-label="Ver detalhes do pedido ${escapeHtml(order.orderNumber)}">Pedido #${escapeHtml(order.orderNumber)}</button><time>${escapeHtml(dateTime(order.createdAt))}</time></div><div class="order-card__customer"><strong>${escapeHtml(order.customerName)}</strong><span>${escapeHtml(order.customerPhone)}</span></div><div class="order-card__meta"><span class="tag">${escapeHtml(FULFILLMENT_LABELS[order.fulfillmentType] || order.fulfillmentType)}</span><span class="tag">${order.items.reduce((sum, item) => sum + item.quantity, 0)} itens</span>${scheduled}</div>${generalNote}${itemNotesBlock}<div class="order-card__payment"><strong>${escapeHtml(PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod)}</strong><span>${escapeHtml(PAYMENT_STATUS_LABELS[order.paymentStatus] || order.paymentStatus)}</span></div><div class="order-card__total"><span>Total</span><strong>${money(order.totalCents)}</strong></div>${actions ? `<div class="order-card__actions">${actions}</div>` : ""}</article>`;
 }
 
 function renderOrders() {
   const orders = filteredOrders();
-  $("#ordersKanban").innerHTML = STATUS_FLOW.map((status) => {
+  $("#ordersKanban").innerHTML = visibleStatusFlow().map((status) => {
     const list = orders.filter((order) => order.status === status);
     return `<section class="kanban-column" data-status="${status}"><div class="kanban-column__head"><strong>${STATUS_LABELS[status]}</strong><span class="kanban-count">${list.length}</span></div><div class="kanban-list">${list.length ? list.map(renderOrderCard).join("") : `<div class="kanban-empty">Nenhum pedido</div>`}</div></section>`;
   }).join("");
   renderNewOrdersBadge();
+}
+
+function scrollKanbanToStatus(status) {
+  const wrap = $(".kanban-wrap");
+  if (!wrap) return;
+  const column = $(`.kanban-column[data-status="${CSS.escape(status)}"]`, wrap);
+  if (!column) return;
+  wrap.scrollTo({ left: column.offsetLeft, behavior: "smooth" });
 }
 
 function renderNewOrdersBadge() {
@@ -421,10 +445,13 @@ async function updateOrderStatus(orderId, status, button) {
   setBusy(button, true, "Salvando…");
   try {
     await api.updateOrderStatus(orderId, status);
+    const showHistory = ["completed", "cancelled"].includes(status);
+    if (showHistory) $("#orderWindow").value = "all";
     state.newOrderIds.delete(orderId);
     document.title = "Pedidos | Atrevida Gourmet";
     toast(`Pedido marcado como ${STATUS_LABELS[status].toLocaleLowerCase("pt-BR")}.`);
     await loadOrders({ quiet: true });
+    if (showHistory) scrollKanbanToStatus(status);
   } catch (error) {
     toast(error.message, "error");
   } finally {
