@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -33,14 +33,21 @@ import { createHardenedServer } from "./plugins/server-hardening.js";
 
 export type BuildAppOptions = {
   serveStatic?: boolean;
+  staticRoot?: string;
   orderEvents?: OrderEventBus;
   sseConnections?: SseConnectionLimiter;
   sseHeartbeatMs?: number;
   sseMaxDurationMs?: number;
 };
 
-function staticRoot() {
+function frontendStaticRoot() {
   return fileURLToPath(new URL("../../dist", import.meta.url));
+}
+
+export function staticAssetCacheControl(filePath: string) {
+  return [".html", ".js", ".css"].includes(extname(filePath).toLowerCase())
+    ? "no-cache"
+    : "public, max-age=86400";
 }
 
 export async function buildApp(
@@ -123,7 +130,7 @@ export async function buildApp(
 
   const shouldServeStatic = options.serveStatic ?? env.SERVE_STATIC;
   if (shouldServeStatic) {
-    const root = staticRoot();
+    const root = options.staticRoot ?? frontendStaticRoot();
     if (!existsSync(root)) {
       throw new Error(`Frontend build não encontrado em ${root}.`);
     }
@@ -135,11 +142,7 @@ export async function buildApp(
       index: ["index.html"],
       cacheControl: false,
       setHeaders(response, filePath) {
-        if (filePath.endsWith(".html")) {
-          response.header("Cache-Control", "no-cache");
-        } else {
-          response.header("Cache-Control", "public, max-age=86400");
-        }
+        response.header("Cache-Control", staticAssetCacheControl(filePath));
       }
     });
   }

@@ -120,9 +120,93 @@ if (!apiClient.includes('"X-Store-Slug"')) fail("Requisições administrativas d
 
 const publicApp = fs.readFileSync(path.join(root, "assets", "js", "app.js"), "utf8");
 const publicHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+const storagePolicy = fs.readFileSync(path.join(root, "assets", "js", "browser-storage-policy.js"), "utf8");
 if (!publicApp.includes("item?.method")) fail("O catálogo deve aceitar paymentMethods[].method.");
 const pollInterval = publicApp.match(/TRACKING_POLL_INTERVAL_MS\s*=\s*([\d_]+)/)?.[1]?.replaceAll("_", "");
 if (!pollInterval || Number(pollInterval) < 60_000) fail("O polling de tracking deve respeitar o limite público da rota.");
+
+const { reconcileCartItems } = await import("../assets/js/cart-reconciliation.js");
+const requiredGroup = {
+  id: "required-group",
+  required: true,
+  minSelect: 1,
+  maxSelect: 1,
+  values: [{ id: "required-value" }]
+};
+const optionalGroup = {
+  id: "optional-group",
+  required: false,
+  minSelect: 0,
+  maxSelect: 1,
+  values: [{ id: "optional-value" }, { id: "optional-value-2" }]
+};
+const cartProduct = {
+  id: "product-1",
+  active: true,
+  priceCents: 1_000,
+  optionGroups: [requiredGroup, optionalGroup]
+};
+const cartProducts = new Map([[cartProduct.id, cartProduct]]);
+const validCartLine = {
+  uid: "line-1",
+  productId: cartProduct.id,
+  quantity: 2,
+  note: "",
+  options: [
+    { groupId: requiredGroup.id, valueId: "required-value" },
+    { groupId: optionalGroup.id, valueId: "optional-value" }
+  ]
+};
+const reconcile = (cart) => reconcileCartItems(cart, cartProducts, {
+  maxLineQuantity: 50,
+  createUid: () => "generated-line"
+});
+
+const decimalQuantity = reconcile([{ ...validCartLine, quantity: 2.8 }]);
+if (decimalQuantity.cart[0]?.quantity !== 2 || !decimalQuantity.changed) {
+  fail("Quantidade decimal salva deve ser normalizada para um inteiro.");
+}
+const excessiveQuantity = reconcile([{ ...validCartLine, quantity: 500 }]);
+if (excessiveQuantity.cart[0]?.quantity !== 50 || !excessiveQuantity.changed) {
+  fail("Quantidade salva acima do máximo deve ser limitada.");
+}
+for (const invalidQuantity of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, "não é número"]) {
+  if (reconcile([{ ...validCartLine, quantity: invalidQuantity }]).cart.length) {
+    fail(`Quantidade inválida não pode permanecer no carrinho: ${String(invalidQuantity)}.`);
+  }
+}
+for (const [label, line] of [
+  ["opção inexistente", { ...validCartLine, options: [{ groupId: requiredGroup.id, valueId: "missing-value" }] }],
+  ["valueId de outro grupo", { ...validCartLine, options: [{ groupId: requiredGroup.id, valueId: "optional-value" }] }],
+  ["grupo obrigatório sem seleção", { ...validCartLine, options: [] }],
+  ["seleção acima de maxSelect", { ...validCartLine, options: [
+    { groupId: requiredGroup.id, valueId: "required-value" },
+    { groupId: optionalGroup.id, valueId: "optional-value" },
+    { groupId: optionalGroup.id, valueId: "optional-value-2" }
+  ] }],
+  ["valueId duplicado", { ...validCartLine, options: [
+    { groupId: requiredGroup.id, valueId: "required-value" },
+    { groupId: requiredGroup.id, valueId: "required-value" }
+  ] }]
+]) {
+  const result = reconcile([line]);
+  if (result.cart.length || !result.changed) fail(`${label} deve invalidar somente a linha afetada.`);
+}
+const validCart = reconcile([validCartLine]);
+if (validCart.changed || JSON.stringify(validCart.cart) !== JSON.stringify([validCartLine])) {
+  fail("Carrinho válido deve continuar intacto após a reconciliação.");
+}
+const reconcileBlock = functionBlock(publicApp, "reconcileCart", "renderTabs");
+const cartChangeMessage = "Alguns itens do carrinho foram atualizados ou removidos porque o cardápio mudou.";
+if ((reconcileBlock.match(/toast\(/g) || []).length !== 1 || !reconcileBlock.includes(cartChangeMessage)) {
+  fail("A reconciliação deve emitir uma única mensagem amigável de alteração.");
+}
+if (reconcileBlock.indexOf("saveCart(state.cart)") > reconcileBlock.indexOf("toast(")) {
+  fail("O carrinho reconciliado deve ser salvo antes da mensagem de alteração.");
+}
+for (const legacyName of ["saveTemporaryTrackingToken", "getTemporaryTrackingToken", "clearTemporaryTrackingToken"]) {
+  if (storagePolicy.includes(legacyName)) fail(`Função legada de tracking ainda existe: ${legacyName}.`);
+}
 
 const adminApp = fs.readFileSync(path.join(root, "assets", "js", "admin.js"), "utf8");
 const productsAdminHtml = fs.readFileSync(path.join(root, "admin", "cardapio", "index.html"), "utf8");

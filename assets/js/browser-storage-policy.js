@@ -31,26 +31,6 @@ export function clearCart() {
 }
 
 /**
- * Tracking token dá acesso a UM pedido.
- * Se persistência entre sessões não for necessária,
- * prefira sessionStorage.
- *
- * Para segurança ainda maior, o backend pode trocar isso por
- * uma sessão HttpOnly e nunca devolver bearer tokens persistentes.
- */
-export function saveTemporaryTrackingToken(token) {
-  sessionStorage.setItem(TRACKING_KEY, token);
-}
-
-export function getTemporaryTrackingToken() {
-  return sessionStorage.getItem(TRACKING_KEY);
-}
-
-export function clearTemporaryTrackingToken() {
-  sessionStorage.removeItem(TRACKING_KEY);
-}
-
-/**
  * Uma aba pode acompanhar mais de um pedido. O token é um segredo de acesso
  * limitado a um único pedido e, por isso, fica apenas nesta sessão/aba.
  */

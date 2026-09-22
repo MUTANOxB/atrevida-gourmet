@@ -1,5 +1,6 @@
 import { api, openApiEventStream } from "./api-client.js";
 import { loadCart, saveCart, loadTrackedOrders, saveTrackedOrders } from "./browser-storage-policy.js";
+import { reconcileCartItems } from "./cart-reconciliation.js";
 
 const STORE_SLUG = document.documentElement.dataset.storeSlug || "atrevida-gourmet";
 const MAX_LINES = 40;
@@ -352,16 +353,15 @@ function applyStoreDetails() {
 }
 
 function reconcileCart() {
-  const before = state.cart.length;
-  state.cart = state.cart.filter((item) => state.products.has(String(item.productId)) && Number(item.quantity || item.qty) > 0).map((item) => ({
-    uid: String(item.uid || uuid()),
-    productId: String(item.productId),
-    quantity: Math.min(MAX_LINE_QUANTITY, Number(item.quantity || item.qty || 1)),
-    note: String(item.note || "").slice(0, 300),
-    options: Array.isArray(item.options) ? item.options.map((option) => ({ groupId: String(option.groupId), valueId: String(option.valueId) })) : []
-  }));
+  const result = reconcileCartItems(state.cart, state.products, {
+    maxLineQuantity: MAX_LINE_QUANTITY,
+    createUid: uuid
+  });
+  state.cart = result.cart;
   saveCart(state.cart);
-  if (before !== state.cart.length) toast("Itens indisponíveis foram removidos do carrinho.", "warning");
+  if (result.changed) {
+    toast("Alguns itens do carrinho foram atualizados ou removidos porque o cardápio mudou.", "warning");
+  }
 }
 
 function renderTabs() {

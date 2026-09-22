@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import sharp from "sharp";
 
@@ -26,7 +29,7 @@ globalThis.fetch = (async (input, init) => {
   return supabaseFetchHandler(url, method, body);
 }) as typeof fetch;
 
-const { buildApp } = await import("./server.js");
+const { buildApp, staticAssetCacheControl } = await import("./server.js");
 const { canTransitionOrder } = await import("./modules/admin/admin.service.js");
 
 function jsonResponse(body: unknown, status = 200) {
@@ -35,6 +38,45 @@ function jsonResponse(body: unknown, status = 200) {
     headers: { "content-type": "application/json" }
   });
 }
+
+test("política de cache distingue assets mutáveis de imagens", () => {
+  for (const filePath of ["/site/index.html", "/assets/js/app.js", "/assets/css/styles.css"]) {
+    const policy = staticAssetCacheControl(filePath);
+    assert.equal(policy, "no-cache", filePath);
+    assert.doesNotMatch(policy, /max-age=86400/, filePath);
+  }
+  assert.equal(staticAssetCacheControl("/assets/images/logo.webp"), "public, max-age=86400");
+});
+
+test("Fastify Static entrega a política de cache esperada", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "atrevida-static-"));
+  await Promise.all([
+    mkdir(join(root, "assets", "js"), { recursive: true }),
+    mkdir(join(root, "assets", "css"), { recursive: true }),
+    mkdir(join(root, "assets", "images"), { recursive: true })
+  ]);
+  await Promise.all([
+    writeFile(join(root, "index.html"), "<!doctype html><title>Atrevida</title>"),
+    writeFile(join(root, "assets", "js", "app.js"), "export {};"),
+    writeFile(join(root, "assets", "css", "styles.css"), "body {}"),
+    writeFile(join(root, "assets", "images", "logo.webp"), Buffer.from([0]))
+  ]);
+
+  const app = await buildApp({ serveStatic: true, staticRoot: root });
+  context.after(async () => {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  for (const url of ["/index.html", "/assets/js/app.js", "/assets/css/styles.css"]) {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 200, url);
+    assert.equal(response.headers["cache-control"], "no-cache", url);
+  }
+  const image = await app.inject({ method: "GET", url: "/assets/images/logo.webp" });
+  assert.equal(image.statusCode, 200);
+  assert.equal(image.headers["cache-control"], "public, max-age=86400");
+});
 
 test("servidor registra hardening e responde health", async (context) => {
   const app = await buildApp({ serveStatic: false });
