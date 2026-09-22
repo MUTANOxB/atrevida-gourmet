@@ -6,7 +6,7 @@ import { requireAdmin } from "../../middleware/admin-auth.js";
 import { noStore } from "../../middleware/no-store.js";
 import { myOrdersQuery } from "../orders/orders.schemas.js";
 import {
-  listPublicSessionOrderIds,
+  publicSessionOwnsOrder,
   resolvePublicOrderSession,
   resolvePublicStoreId
 } from "../orders/public-order-session.service.js";
@@ -97,9 +97,6 @@ export async function realtimeRoutes(
       const { storeSlug } = myOrdersQuery.parse(request.query);
       const session = await resolvePublicOrderSession(request, reply);
       const storeId = await resolvePublicStoreId(storeSlug);
-      const orderIds = new Set(
-        await listPublicSessionOrderIds(session.id, storeId)
-      );
       const release = acquireConnection(request, connections);
       try {
         await options.events.ensureStarted();
@@ -115,8 +112,17 @@ export async function realtimeRoutes(
         onClose: release
       });
       const stop = options.events.listen((event) => {
-        if (event.storeId !== storeId || !orderIds.has(event.orderId)) return;
-        stream.send(publicEvent(event));
+        if (event.storeId !== storeId) return;
+        void publicSessionOwnsOrder(session.id, storeId, event.orderId)
+          .then((ownsOrder) => {
+            if (ownsOrder) stream.send(publicEvent(event));
+          })
+          .catch(() => {
+            request.log.warn(
+              { reason: "session_order_revalidation_failed" },
+              "Could not revalidate public session order"
+            );
+          });
       });
       stream.addCleanup(stop);
       stream.send({ type: "connected" });

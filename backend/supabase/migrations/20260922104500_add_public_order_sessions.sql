@@ -1,6 +1,8 @@
 -- Anonymous, backend-only browser sessions for persistent public order tracking.
 -- Raw cookie tokens never reach the database; only their SHA-256 hex digest is stored.
 
+begin;
+
 create table public.public_order_sessions (
   id uuid primary key default gen_random_uuid(),
   token_hash text not null unique,
@@ -43,6 +45,10 @@ alter table public.public_order_session_orders enable row level security;
 
 revoke all on table public.public_order_sessions from public, anon, authenticated;
 revoke all on table public.public_order_session_orders from public, anon, authenticated;
+revoke all on table public.public_order_sessions from service_role;
+revoke all on table public.public_order_session_orders from service_role;
 
 grant select, insert, update on table public.public_order_sessions to service_role;
 grant select, insert on table public.public_order_session_orders to service_role;
+
+commit;

@@ -10,6 +10,7 @@ process.env.FRONTEND_ORIGIN = "http://localhost:3000";
 type SessionRow = {
   id: string;
   token_hash: string;
+  created_at: string;
   expires_at: string;
   last_seen_at: string;
 };
@@ -24,6 +25,8 @@ let nextSession = 7;
 const sessions = new Map<string, SessionRow>();
 const links = new Map<string, { session_id: string; order_id: string; store_id: string; created_at: string }>();
 const insertedSessionBodies: Array<Record<string, unknown>> = [];
+const updatedSessionBodies: Array<Record<string, unknown>> = [];
+let failLastSeenUpdate = false;
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -107,6 +110,10 @@ globalThis.fetch = (async (input, init) => {
       return jsonResponse({ id }, 201);
     }
     if (method === "PATCH") {
+      updatedSessionBodies.push(body);
+      if (failLastSeenUpdate) {
+        return jsonResponse({ code: "TEMPORARY_FAILURE", message: "unavailable" }, 503);
+      }
       const id = equality(url, "id");
       const entry = [...sessions.entries()].find(([, row]) => row.id === id);
       if (entry) sessions.set(entry[0], { ...entry[1], ...body });
@@ -151,6 +158,7 @@ globalThis.fetch = (async (input, init) => {
 
 const {
   PUBLIC_ORDER_SESSION_COOKIE,
+  PUBLIC_ORDER_SESSION_LAST_SEEN_INTERVAL_MS,
   PUBLIC_ORDER_SESSION_MAX_AGE_SECONDS,
   associateOrderWithPublicSession,
   generatePublicOrderSessionToken,
@@ -190,6 +198,8 @@ test.beforeEach(() => {
   sessions.clear();
   links.clear();
   insertedSessionBodies.length = 0;
+  updatedSessionBodies.length = 0;
+  failLastSeenUpdate = false;
 });
 
 test("token usa 256 bits e o banco recebe somente SHA-256 determinístico", async () => {
@@ -219,6 +229,59 @@ test("cookie persistente é HttpOnly, restrito a /api/public e Secure em produç
   assert.ok(options.maxAge >= 29 * 24 * 60 * 60);
 });
 
+test("sessão mantém expiração absoluta apesar do uso em 15/09 e 29/09", async () => {
+  const createdAt = new Date("2026-09-01T12:00:00.000Z");
+  const target = fakeReply();
+  const session = await resolvePublicOrderSession(fakeRequest(), target.reply, createdAt);
+  const token = target.set.at(-1)!.value;
+  const inserted = insertedSessionBodies[0];
+  assert.equal(inserted.created_at, createdAt.toISOString());
+  assert.equal(inserted.expires_at, "2026-10-01T12:00:00.000Z");
+
+  for (const usedAt of ["2026-09-15T12:00:00.000Z", "2026-09-29T12:00:00.000Z"]) {
+    const validReply = fakeReply();
+    const resolved = await resolvePublicOrderSession(
+      fakeRequest(token),
+      validReply.reply,
+      new Date(usedAt)
+    );
+    assert.equal(resolved.id, session.id);
+    assert.equal(validReply.set.length, 0, usedAt);
+    assert.equal(sessions.get(hashPublicOrderSessionToken(token))?.expires_at, inserted.expires_at);
+  }
+  assert.equal(updatedSessionBodies.length, 2);
+  assert.ok(updatedSessionBodies.every((body) =>
+    Object.keys(body).length === 1 && typeof body.last_seen_at === "string"
+  ));
+});
+
+test("last_seen_at é limitado a cada seis horas e falha de manutenção não invalida a sessão", async () => {
+  const createdAt = new Date("2026-09-01T12:00:00.000Z");
+  const target = fakeReply();
+  const session = await resolvePublicOrderSession(fakeRequest(), target.reply, createdAt);
+  const token = target.set.at(-1)!.value;
+
+  const beforeThreshold = new Date(createdAt.getTime() + PUBLIC_ORDER_SESSION_LAST_SEEN_INTERVAL_MS - 1);
+  const quietReply = fakeReply();
+  assert.equal(
+    (await resolvePublicOrderSession(fakeRequest(token), quietReply.reply, beforeThreshold)).id,
+    session.id
+  );
+  assert.equal(updatedSessionBodies.length, 0);
+  assert.equal(quietReply.set.length, 0);
+
+  failLastSeenUpdate = true;
+  const afterThreshold = new Date(createdAt.getTime() + PUBLIC_ORDER_SESSION_LAST_SEEN_INTERVAL_MS);
+  const maintenanceFailureReply = fakeReply();
+  assert.equal(
+    (await resolvePublicOrderSession(fakeRequest(token), maintenanceFailureReply.reply, afterThreshold)).id,
+    session.id
+  );
+  assert.equal(updatedSessionBodies.length, 1);
+  assert.equal("expires_at" in updatedSessionBodies[0], false);
+  assert.equal(maintenanceFailureReply.set.length, 0);
+});
+
 test("cookie desconhecido ou sessão expirada é rotacionado sem cadastrar o segredo recebido", async () => {
   const unknown = generatePublicOrderSessionToken();
   const unknownReply = fakeReply();
@@ -231,6 +294,7 @@ test("cookie desconhecido ou sessão expirada é rotacionado sem cadastrar o seg
   sessions.set(hashPublicOrderSessionToken(expired), {
     id: sessionA,
     token_hash: hashPublicOrderSessionToken(expired),
+    created_at: "2026-08-01T00:00:00.000Z",
     last_seen_at: "2026-08-01T00:00:00.000Z",
     expires_at: "2026-08-31T00:00:00.000Z"
   });

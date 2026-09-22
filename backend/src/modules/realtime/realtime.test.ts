@@ -15,11 +15,14 @@ const otherStoreId = "22222222-2222-4222-8222-222222222222";
 const orderId = "33333333-3333-4333-8333-333333333333";
 const otherOrderId = "44444444-4444-4444-8444-444444444444";
 const sameStoreOtherSessionOrderId = "45454545-4545-4454-8454-454545454545";
+const newlyAssociatedOrderId = "46464646-4646-4464-8464-464646464646";
 const trackingToken = "55555555-5555-4555-8555-555555555555";
 const otherTrackingToken = "66666666-6666-4666-8666-666666666666";
 const publicSessionId = "88888888-8888-4888-8888-888888888888";
 const publicSessionToken = Buffer.alloc(32, 7).toString("base64url");
 const publicSessionHash = createHash("sha256").update(publicSessionToken).digest("hex");
+const publicSessionOrderIds = new Set<string>();
+let publicSessionOwnershipChecks = 0;
 let membershipRole: "owner" | "manager" | "staff" = "manager";
 
 globalThis.fetch = (async (input, init) => {
@@ -60,9 +63,25 @@ globalThis.fetch = (async (input, init) => {
   if (url.pathname.endsWith("/rest/v1/public_order_session_orders")) {
     const session = (url.searchParams.get("session_id") ?? "").replace(/^eq\./, "");
     const store = (url.searchParams.get("store_id") ?? "").replace(/^eq\./, "");
-    return jsonResponse(session === publicSessionId && store === storeId
-      ? [{ order_id: orderId, created_at: "2026-09-22T12:00:00.000Z" }]
-      : []);
+    const requestedOrder = (url.searchParams.get("order_id") ?? "").replace(/^eq\./, "");
+    if (requestedOrder) {
+      publicSessionOwnershipChecks += 1;
+      return jsonResponse(
+        session === publicSessionId &&
+        store === storeId &&
+        publicSessionOrderIds.has(requestedOrder)
+          ? { order_id: requestedOrder }
+          : null
+      );
+    }
+    return jsonResponse(
+      session === publicSessionId && store === storeId
+        ? [...publicSessionOrderIds].map((linkedOrderId) => ({
+            order_id: linkedOrderId,
+            created_at: "2026-09-22T12:00:00.000Z"
+          }))
+        : []
+    );
   }
   if (url.pathname.endsWith("/rest/v1/orders")) {
     const filter = url.searchParams.get("tracking_token") ?? "";
@@ -101,6 +120,12 @@ function jsonResponse(body: unknown, status = 200) {
     headers: { "content-type": "application/json" }
   });
 }
+
+test.beforeEach(() => {
+  publicSessionOrderIds.clear();
+  publicSessionOrderIds.add(orderId);
+  publicSessionOwnershipChecks = 0;
+});
 
 async function readUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -308,6 +333,8 @@ test("stream da sessão recebe somente eventos dos pedidos vinculados na loja", 
   assert.equal(response.headers.get("cache-control"), "no-store, no-transform");
   const reader = response.body!.getReader();
 
+  publicSessionOrderIds.add(newlyAssociatedOrderId);
+
   events.publish({
     type: "order.status",
     orderId: otherOrderId,
@@ -324,7 +351,7 @@ test("stream da sessão recebe somente eventos dos pedidos vinculados na loja", 
   });
   events.publish({
     type: "order.status",
-    orderId,
+    orderId: newlyAssociatedOrderId,
     storeId,
     trackingToken,
     status: "confirmed"
@@ -334,9 +361,10 @@ test("stream da sessão recebe somente eventos dos pedidos vinculados na loja", 
   assert.match(content, /"type":"order.status"/);
   assert.equal(content.includes("cancelled"), false);
   assert.equal(content.includes("ready"), false);
-  assert.equal(content.includes(orderId), false);
+  assert.equal(content.includes(newlyAssociatedOrderId), false);
   assert.equal(content.includes(storeId), false);
   assert.equal(content.includes(trackingToken), false);
+  assert.equal(publicSessionOwnershipChecks, 2);
   await closeStream(controller, reader);
 });
 

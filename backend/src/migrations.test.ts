@@ -55,6 +55,8 @@ test("migration de sessões públicas mantém tokens protegidos e isolamento mul
     "utf8"
   );
 
+  assert.match(migration, /^\s*(?:--[^\n]*\n)*\s*begin\s*;/i);
+  assert.match(migration, /commit\s*;\s*$/i);
   assert.match(migration, /create table public\.public_order_sessions/i);
   assert.match(migration, /token_hash text not null unique/i);
   assert.match(migration, /token_hash\s*~\s*'\^\[0-9a-f\]\{64\}\$'/i);
@@ -71,6 +73,13 @@ test("migration de sessões públicas mantém tokens protegidos e isolamento mul
   }
   assert.match(migration, /grant select, insert, update on table public\.public_order_sessions to service_role/i);
   assert.match(migration, /grant select, insert on table public\.public_order_session_orders to service_role/i);
+  for (const table of ["public_order_sessions", "public_order_session_orders"]) {
+    const revoke = new RegExp(`revoke all on table public\\.${table} from service_role`, "i");
+    const grant = new RegExp(`grant [^;]+ on table public\\.${table} to service_role`, "i");
+    assert.match(migration, revoke);
+    assert.ok(migration.search(revoke) < migration.search(grant));
+  }
+  assert.doesNotMatch(migration, /grant\s+[^;]*(?:delete|truncate)[^;]*\s+to\s+service_role/i);
   assert.doesNotMatch(migration, /grant\s+[^;]+\s+to\s+(?:anon|authenticated)/i);
   assert.doesNotMatch(migration, /create\s+policy/i);
 });

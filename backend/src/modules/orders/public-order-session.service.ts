@@ -7,6 +7,7 @@ import { supabaseAdmin } from "../../lib/supabase.js";
 
 export const PUBLIC_ORDER_SESSION_COOKIE = "atrevida_order_session";
 export const PUBLIC_ORDER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+export const PUBLIC_ORDER_SESSION_LAST_SEEN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const COOKIE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export type PublicOrderSession = {
@@ -73,6 +74,7 @@ async function createPublicOrderSession(
       .from("public_order_sessions")
       .insert({
         token_hash: tokenHash,
+        created_at: now.toISOString(),
         last_seen_at: now.toISOString(),
         expires_at: expiresAt(now)
       })
@@ -99,7 +101,7 @@ export async function resolvePublicOrderSession(
     const tokenHash = hashPublicOrderSessionToken(token);
     const { data, error } = await supabaseAdmin
       .from("public_order_sessions")
-      .select("id, expires_at")
+      .select("id, last_seen_at, expires_at")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -108,17 +110,16 @@ export async function resolvePublicOrderSession(
     }
 
     if (data && new Date(data.expires_at).getTime() > now.getTime()) {
-      const { error: updateError } = await supabaseAdmin
-        .from("public_order_sessions")
-        .update({
-          last_seen_at: now.toISOString(),
-          expires_at: expiresAt(now)
-        })
-        .eq("id", data.id);
-      if (updateError) {
-        throw new HttpError(503, "Acompanhamento temporariamente indisponível.");
+      const lastSeenAt = new Date(data.last_seen_at).getTime();
+      if (
+        !Number.isFinite(lastSeenAt) ||
+        now.getTime() - lastSeenAt >= PUBLIC_ORDER_SESSION_LAST_SEEN_INTERVAL_MS
+      ) {
+        await supabaseAdmin
+          .from("public_order_sessions")
+          .update({ last_seen_at: now.toISOString() })
+          .eq("id", data.id);
       }
-      setPublicOrderSessionCookie(reply, token);
       return { id: data.id as string };
     }
   }
@@ -165,6 +166,22 @@ export async function listPublicSessionOrderIds(
     .limit(10);
   if (error) throw new HttpError(503, "Acompanhamento temporariamente indisponível.");
   return (data ?? []).map((link: any) => link.order_id as string);
+}
+
+export async function publicSessionOwnsOrder(
+  sessionId: string,
+  storeId: string,
+  orderId: string
+) {
+  const { data, error } = await supabaseAdmin
+    .from("public_order_session_orders")
+    .select("order_id")
+    .eq("session_id", sessionId)
+    .eq("store_id", storeId)
+    .eq("order_id", orderId)
+    .maybeSingle();
+  if (error) throw new HttpError(503, "Acompanhamento temporariamente indisponível.");
+  return !!data;
 }
 
 export async function listPublicSessionOrders(
