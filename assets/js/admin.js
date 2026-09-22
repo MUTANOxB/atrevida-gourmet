@@ -32,7 +32,7 @@ const STATUS_LABELS = {
   cancelled: "Pedidos cancelados"
 };
 const STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed", "cancelled"];
-const ACTIVE_STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery"];
+const ACTIVE_STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed"];
 const FULFILLMENT_LABELS = { delivery: "Entrega", pickup: "Retirada", scheduled: "Encomenda" };
 const PAYMENT_LABELS = { pix: "Pix", cash: "Dinheiro", card_on_delivery: "Cartão no recebimento" };
 const PAYMENT_STATUS_LABELS = {
@@ -345,11 +345,11 @@ function primaryOrderAction(order) {
 function renderOrderCard(order) {
   const primaryAction = primaryOrderAction(order);
   const scheduled = order.scheduledFor ? `<span class="tag">📅 ${escapeHtml(dateTime(order.scheduledFor))}</span>` : "";
-  const active = ACTIVE_STATUS_FLOW.includes(order.status);
-  const generalNote = active && order.note.trim()
+  const showNotes = !["completed", "cancelled"].includes(order.status);
+  const generalNote = showNotes && order.note.trim()
     ? `<div class="order-card__note"><strong>⚠ Observação</strong><p>${escapeHtml(order.note.trim())}</p></div>`
     : "";
-  const itemNotes = active
+  const itemNotes = showNotes
     ? order.items.filter((item) => item.note.trim()).map((item) =>
         `<li><strong>${escapeHtml(item.name)}:</strong> ${escapeHtml(item.note.trim())}</li>`
       ).join("")
@@ -445,13 +445,13 @@ async function updateOrderStatus(orderId, status, button) {
   setBusy(button, true, "Salvando…");
   try {
     await api.updateOrderStatus(orderId, status);
-    const showHistory = ["completed", "cancelled"].includes(status);
+    const showHistory = status === "cancelled";
     if (showHistory) $("#orderWindow").value = "all";
     state.newOrderIds.delete(orderId);
     document.title = "Pedidos | Atrevida Gourmet";
     toast(`Pedido marcado como ${STATUS_LABELS[status].toLocaleLowerCase("pt-BR")}.`);
     await loadOrders({ quiet: true });
-    if (showHistory) scrollKanbanToStatus(status);
+    if (["completed", "cancelled"].includes(status)) scrollKanbanToStatus(status);
   } catch (error) {
     toast(error.message, "error");
   } finally {

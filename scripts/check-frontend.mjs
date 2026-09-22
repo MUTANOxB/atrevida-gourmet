@@ -128,11 +128,11 @@ const adminApp = fs.readFileSync(path.join(root, "assets", "js", "admin.js"), "u
 const productsAdminHtml = fs.readFileSync(path.join(root, "admin", "cardapio", "index.html"), "utf8");
 const activeStatusFlow = stringArrayConstant(adminApp, "ACTIVE_STATUS_FLOW");
 const completeStatusFlow = stringArrayConstant(adminApp, "STATUS_FLOW");
-const expectedActiveStatuses = ["pending", "confirmed", "preparing", "ready", "out_for_delivery"];
+const expectedActiveStatuses = ["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed"];
 if (JSON.stringify(activeStatusFlow) !== JSON.stringify(expectedActiveStatuses)) {
-  fail("O modo de pedidos ativos deve conter somente os cinco status operacionais ativos.");
+  fail("O modo de pedidos ativos deve conter os status operacionais até concluído, sem cancelados.");
 }
-if (JSON.stringify(completeStatusFlow) !== JSON.stringify([...expectedActiveStatuses, "completed", "cancelled"])) {
+if (JSON.stringify(completeStatusFlow) !== JSON.stringify([...expectedActiveStatuses, "cancelled"])) {
   fail("O modo de pedidos recentes deve permitir todos os status operacionais.");
 }
 const visibleFlow = functionBlock(adminApp, "visibleStatusFlow", "primaryOrderAction");
@@ -140,21 +140,21 @@ if (!/value\s*===\s*["']all["']\s*\?\s*STATUS_FLOW\s*:\s*ACTIVE_STATUS_FLOW/.tes
   fail("As colunas do Kanban devem respeitar o filtro active/all.");
 }
 const orderCard = functionBlock(adminApp, "renderOrderCard", "renderOrders");
-if (!/active\s*&&\s*order\.note\.trim\(\)/.test(orderCard) || !/escapeHtml\(order\.note\.trim\(\)\)/.test(orderCard)) {
+if (!/showNotes\s*&&\s*order\.note\.trim\(\)/.test(orderCard) || !/escapeHtml\(order\.note\.trim\(\)\)/.test(orderCard)) {
   fail("A observação geral ativa deve ser exibida completa e escapada no card.");
 }
 if (!/filter\(\(item\)\s*=>\s*item\.note\.trim\(\)\)/.test(orderCard) || !/escapeHtml\(item\.name\)/.test(orderCard) || !/escapeHtml\(item\.note\.trim\(\)\)/.test(orderCard)) {
   fail("Observações de itens ativos devem ser filtradas e escapadas no card.");
 }
-if (!/const\s+active\s*=\s*ACTIVE_STATUS_FLOW\.includes\(order\.status\)/.test(orderCard) || !/const\s+generalNote\s*=\s*active/.test(orderCard) || !/const\s+itemNotes\s*=\s*active/.test(orderCard)) {
+if (!/const\s+showNotes\s*=\s*!\[["']completed["'],\s*["']cancelled["']\]\.includes\(order\.status\)/.test(orderCard) || !/const\s+generalNote\s*=\s*showNotes/.test(orderCard) || !/const\s+itemNotes\s*=\s*showNotes/.test(orderCard)) {
   fail("Pedidos concluídos ou cancelados não devem exibir observações no card.");
 }
 const statusUpdate = adminApp.slice(
   adminApp.indexOf("async function updateOrderStatus"),
   adminApp.indexOf("async function confirmPix")
 );
-if (!/\[["']completed["'],\s*["']cancelled["']\]\.includes\(status\)/.test(statusUpdate) || !/orderWindow["']\)\.value\s*=\s*["']all["']/.test(statusUpdate)) {
-  fail("Concluir ou cancelar deve alternar automaticamente o filtro para todos os recentes.");
+if (!/showHistory\s*=\s*status\s*===\s*["']cancelled["']/.test(statusUpdate) || !/if\s*\(showHistory\)\s*\$\(["']#orderWindow["']\)\.value\s*=\s*["']all["']/.test(statusUpdate)) {
+  fail("Somente cancelar deve alternar automaticamente o filtro para todos os recentes.");
 }
 const orderDetails = functionBlock(adminApp, "openOrderDetails", "initOrders");
 if (!/escapeHtml\(order\.note\)/.test(orderDetails) || !/escapeHtml\(item\.note\)/.test(orderDetails)) {
@@ -244,6 +244,27 @@ for (const selector of ["admin-shell", "admin-main"]) {
 
 if (!publicApp.includes("function orderStatusMessage(order)")) {
   fail("O pedido público deve apresentar uma mensagem simples para o status atual.");
+}
+const decimalParser = functionBlock(publicApp, "decimalToCents", "syncChangeField");
+const parseCents = new Function(`${decimalParser}; return decimalToCents;`)();
+for (const [value, expected] of [["50", 5000], ["50,00", 5000], ["50.00", 5000], ["R$ 50,00", 5000], ["1.000,50", 100050], ["1,000.50", 100050]]) {
+  if (parseCents(value) !== expected) fail(`Parser de troco incorreto para ${value}.`);
+}
+for (const value of ["sem número", "-50", "1,2,3", "5 0"]) {
+  if (!Number.isNaN(parseCents(value))) fail(`Parser de troco aceitou formato inválido: ${value}.`);
+}
+if (!publicApp.includes('throw new Error("O valor para troco deve ser igual ou maior que o total.")')) {
+  fail("O checkout deve validar o troco contra o total conhecido.");
+}
+const checkoutSetup = functionBlock(publicApp, "configureCheckout", "resetQuote");
+if (!checkoutSetup.includes("syncChangeField()") || !/changeField\.hidden\s*=\s*els\.paymentSelect\.value\s*!==\s*["']cash["']/.test(publicApp)) {
+  fail("O campo de troco deve acompanhar a forma de pagamento após configuração e reset.");
+}
+if (!/id=["']scheduledOrderCta["'][^>]*\bhidden\b/.test(publicHtml)) {
+  fail("O CTA de encomendas deve iniciar oculto.");
+}
+if (!/scheduledOrderCta\.hidden\s*=\s*!\(catalog\.acceptsScheduledOrders\s*&&\s*scheduledOrderCategory\(catalog\)\)/.test(publicApp) || !/normalizeText\(`\$\{item\.name\}\s+\$\{item\.slug\}`\)\.includes\(["']encomenda["']\)/.test(publicApp)) {
+  fail("O CTA deve aparecer somente com agendamento e categoria de encomendas.");
 }
 if (publicApp.includes("orderTimeline") || publicApp.includes("trackingForm")) {
   fail("A interface pública não deve manter timeline nem formulário manual de tracking.");

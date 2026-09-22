@@ -271,7 +271,7 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
 
     const orderPayload: Record<string, unknown> = {
       store_id: store.id,
-      order_number: createOrderNumber(),
+      order_number: createOrderNumber(new Date(), store.timezone),
       status: "pending",
       fulfillment_type: input.fulfillmentType,
       customer_name: input.customer.name,
@@ -297,7 +297,7 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
 
     let order: any = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (attempt > 0) orderPayload.order_number = createOrderNumber();
+      if (attempt > 0) orderPayload.order_number = createOrderNumber(new Date(), store.timezone);
       const { data, error } = await supabaseAdmin.rpc("create_order_with_items", {
         order_payload: orderPayload,
         items_payload: preparedItems

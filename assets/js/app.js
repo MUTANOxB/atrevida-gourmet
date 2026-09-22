@@ -61,6 +61,7 @@ const els = {
   deliveryCapability: $("#deliveryCapability"),
   pickupCapability: $("#pickupCapability"),
   scheduledCapability: $("#scheduledCapability"),
+  scheduledOrderCta: $("#scheduledOrderCta"),
   tabs: $("#categoryTabs"),
   grid: $("#productGrid"),
   feedback: $("#catalogFeedback"),
@@ -170,6 +171,10 @@ function whatsappProfile(displayValue, e164Value) {
 
 function normalizeText(value) {
   return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+}
+
+function scheduledOrderCategory(catalog = state.catalog) {
+  return catalog?.categories.find((item) => normalizeText(`${item.name} ${item.slug}`).includes("encomenda"));
 }
 
 function money(cents, currency = state.catalog?.currency || "BRL") {
@@ -335,6 +340,7 @@ function applyStoreDetails() {
   els.deliveryCapability.classList.toggle("is-unavailable", !catalog.acceptsDelivery);
   els.pickupCapability.classList.toggle("is-unavailable", !catalog.acceptsPickup);
   els.scheduledCapability.classList.toggle("is-unavailable", !catalog.acceptsScheduledOrders);
+  els.scheduledOrderCta.hidden = !(catalog.acceptsScheduledOrders && scheduledOrderCategory(catalog));
   if (!catalog.isOpen) {
     els.storeAlert.hidden = false;
     els.storeAlert.textContent = catalog.acceptsScheduledOrders
@@ -580,6 +586,7 @@ function configureCheckout() {
     ? `<option value="">Selecione</option>${catalog.paymentMethods.map((method) => `<option value="${escapeHtml(method.code)}">${escapeHtml(method.label)}</option>`).join("")}`
     : `<option value="">Formas de pagamento pendentes</option>`;
   els.paymentSelect.disabled = catalog.paymentMethods.length === 0;
+  syncChangeField();
   setFulfillmentFields();
   els.checkoutBtn.disabled = Boolean(checkoutBlockReason());
 }
@@ -674,10 +681,43 @@ function openCheckout() {
 }
 
 function decimalToCents(value) {
-  const normalized = String(value || "").replace(/[^\d,.-]/g, "").replaceAll(".", "").replace(",", ".");
-  if (!normalized) return undefined;
-  const amount = Number(normalized);
-  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : NaN;
+  const raw = String(value ?? "").trim();
+  if (!raw) return undefined;
+  const normalized = raw.replace(/^R\$\s*/i, "").trim();
+  if (!/^\d+(?:[.,]\d+)*$/.test(normalized)) return NaN;
+
+  const comma = normalized.lastIndexOf(",");
+  const dot = normalized.lastIndexOf(".");
+  let integerPart = normalized;
+  let fractionPart = "";
+
+  if (comma >= 0 && dot >= 0) {
+    const decimalSeparator = comma > dot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    const decimalIndex = normalized.lastIndexOf(decimalSeparator);
+    integerPart = normalized.slice(0, decimalIndex);
+    fractionPart = normalized.slice(decimalIndex + 1);
+    const integerPattern = new RegExp(`^\\d{1,3}(?:\\${thousandsSeparator}\\d{3})*$`);
+    if (!integerPattern.test(integerPart) || !/^\d{1,2}$/.test(fractionPart)) return NaN;
+    integerPart = integerPart.replaceAll(thousandsSeparator, "");
+  } else if (comma >= 0 || dot >= 0) {
+    const separator = comma >= 0 ? "," : ".";
+    const parts = normalized.split(separator);
+    if (parts.length === 2 && /^\d{1,2}$/.test(parts[1])) {
+      [integerPart, fractionPart] = parts;
+    } else if (parts.length >= 2 && /^\d{1,3}$/.test(parts[0]) && parts.slice(1).every((part) => /^\d{3}$/.test(part))) {
+      integerPart = parts.join("");
+    } else {
+      return NaN;
+    }
+  }
+
+  const cents = Number(integerPart) * 100 + Number(fractionPart.padEnd(2, "0") || 0);
+  return Number.isSafeInteger(cents) ? cents : NaN;
+}
+
+function syncChangeField() {
+  els.changeField.hidden = els.paymentSelect.value !== "cash";
 }
 
 function validateCheckout(form) {
@@ -691,6 +731,16 @@ function validateCheckout(form) {
   if (currentFulfillment() === "delivery") {
     if (!state.quote || state.quoteFingerprint !== quoteFingerprint()) throw new Error("Calcule novamente a entrega para o bairro informado.");
     if (state.quote.minimumOrderCents && totals.subtotalCents < state.quote.minimumOrderCents) throw new Error(`O pedido mínimo para esta região é ${money(state.quote.minimumOrderCents)}.`);
+  }
+  const formData = new FormData(form);
+  const changeValue = String(formData.get("changeFor") ?? "").trim();
+  if (formData.get("paymentMethod") === "cash" && changeValue) {
+    const changeForCents = decimalToCents(changeValue);
+    if (Number.isNaN(changeForCents)) throw new Error("Informe um valor de troco válido.");
+    const deliveryFeeCents = currentFulfillment() === "delivery" ? Number(state.quote?.feeCents || 0) : 0;
+    if (changeForCents < totals.subtotalCents + deliveryFeeCents) {
+      throw new Error("O valor para troco deve ser igual ou maior que o total.");
+    }
   }
 }
 
@@ -935,7 +985,7 @@ function wireEvents() {
   els.checkoutForm.addEventListener("change", (event) => {
     resetCheckoutAttempt();
     if (event.target.name === "fulfillmentType") setFulfillmentFields();
-    if (event.target.name === "paymentMethod") els.changeField.hidden = event.target.value !== "cash";
+    if (event.target.name === "paymentMethod") syncChangeField();
   });
   els.checkoutForm.addEventListener("input", (event) => {
     resetCheckoutAttempt();
@@ -960,7 +1010,7 @@ function wireEvents() {
   });
   els.successCloseBtn.addEventListener("click", () => { closeDialog(els.successModal); document.querySelector("#cardapio").scrollIntoView({ behavior: "smooth" }); });
   els.showOrdersCategory.addEventListener("click", () => {
-    const category = state.catalog?.categories.find((item) => normalizeText(`${item.name} ${item.slug}`).includes("encomenda"));
+    const category = scheduledOrderCategory();
     if (category) {
       state.activeCategory = category.id;
       state.search = "";
