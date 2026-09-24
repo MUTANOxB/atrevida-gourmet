@@ -12,6 +12,7 @@ export async function getPublicCatalog(storeSlug: string) {
     .select(`
       id, slug, name, description, logo_url, setup_complete, is_open,
       accepts_delivery, accepts_pickup, accepts_scheduled_orders,
+      delivery_fee_mode, fixed_delivery_fee_cents,
       minimum_order_cents, currency, timezone, instagram_handle,
       whatsapp_e164, whatsapp_display, pix_key, pix_merchant_name, pix_merchant_city,
       categories(
@@ -94,7 +95,13 @@ export async function getPublicCatalog(storeSlug: string) {
         : isOpen
           ? "Aberto agora."
           : "Fechado no momento.",
-    acceptsDelivery: setupComplete && store.accepts_delivery,
+    acceptsDelivery: setupComplete && store.accepts_delivery && (
+      store.delivery_fee_mode !== "fixed" || store.fixed_delivery_fee_cents != null
+    ),
+    deliveryFeeMode: store.delivery_fee_mode,
+    ...(store.delivery_fee_mode === "fixed"
+      ? { fixedDeliveryFeeCents: store.fixed_delivery_fee_cents }
+      : {}),
     acceptsPickup: setupComplete && store.accepts_pickup,
     acceptsScheduledOrders: setupComplete && store.accepts_scheduled_orders,
     minimumOrderCents: store.minimum_order_cents,

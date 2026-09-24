@@ -70,3 +70,21 @@ test("aplica limites de linhas, quantidade por linha e unidades totais", () => {
   }));
   assert.equal(createOrderSchema.safeParse(tooManyUnits).success, false);
 });
+
+test("entrega exige endereço, mas não exige zoneId universalmente", () => {
+  const fixedDelivery = {
+    ...validOrder(),
+    fulfillmentType: "delivery",
+    delivery: {
+      street: "Rua Teste",
+      number: "10",
+      neighborhood: "Centro"
+    }
+  };
+  assert.equal(createOrderSchema.safeParse(fixedDelivery).success, true);
+
+  const missingAddress = { ...fixedDelivery, delivery: undefined };
+  const parsed = createOrderSchema.safeParse(missingAddress);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues[0]?.message ?? "", /Endereço de entrega é obrigatório/);
+});

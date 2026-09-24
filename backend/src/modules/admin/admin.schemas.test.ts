@@ -25,6 +25,16 @@ test("configuracoes aceitam somente WhatsApp internacional valido", () => {
   assert.equal(updateStoreBody.safeParse({ whatsappE164: null }).success, true);
 });
 
+test("configuração de entrega aceita taxa zero e null tipado", () => {
+  assert.equal(updateStoreBody.safeParse({
+    deliveryFeeMode: "fixed",
+    fixedDeliveryFeeCents: 0
+  }).success, true);
+  assert.equal(updateStoreBody.safeParse({ fixedDeliveryFeeCents: null }).success, true);
+  assert.equal(updateStoreBody.safeParse({ fixedDeliveryFeeCents: 1.5 }).success, false);
+  assert.equal(updateStoreBody.safeParse({ deliveryFeeMode: "distance" }).success, false);
+});
+
 test("cada dia aceita somente um intervalo no editor semanal", () => {
   const result = replaceHoursBody.safeParse({
     hours: [

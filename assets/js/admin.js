@@ -23,6 +23,7 @@ const state = {
   optionValues: [],
   optionProduct: null,
   zones: [],
+  deliveryStore: null,
   exceptions: []
 };
 
@@ -897,6 +898,23 @@ async function saveZone(event) {
 }
 
 async function initDelivery() {
+  const settingsForm = $("#deliverySettingsForm");
+  const syncDeliveryMode = () => {
+    const fixed = settingsForm.elements.deliveryFeeMode.value === "fixed";
+    $("#fixedDeliveryFields").hidden = !fixed;
+    $("#zonesPanel").hidden = fixed;
+  };
+  const loadDeliverySettings = async () => {
+    try {
+      state.deliveryStore = normalizeStore(await api.getStoreSettings());
+      settingsForm.elements.deliveryFeeMode.value = state.deliveryStore.deliveryFeeMode;
+      settingsForm.elements.fixedDeliveryFee.value = formatMoneyInput(state.deliveryStore.fixedDeliveryFeeCents);
+      syncDeliveryMode();
+      if (state.deliveryStore.deliveryFeeMode === "zones") await loadZones();
+    } catch (error) {
+      setError("deliverySettingsError", error.message);
+    }
+  };
   $("#newZone").addEventListener("click", () => openZoneForm());
   $("#zoneForm").addEventListener("submit", saveZone);
   $("#zoneList").addEventListener("click", (event) => {
@@ -905,7 +923,31 @@ async function initDelivery() {
     if (edit) openZoneForm(state.zones.find((item) => item.id === edit.dataset.editZone));
     if (remove) deleteResource("delivery-zones", remove.dataset.deleteZone, "zona", loadZones);
   });
-  await loadZones();
+  settingsForm.elements.deliveryFeeMode.addEventListener("change", syncDeliveryMode);
+  settingsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = settingsForm.querySelector('[type="submit"]');
+    setBusy(submit, true);
+    setError("deliverySettingsError");
+    try {
+      const deliveryFeeMode = settingsForm.elements.deliveryFeeMode.value;
+      const input = { deliveryFeeMode };
+      if (deliveryFeeMode === "fixed") {
+        input.fixedDeliveryFeeCents = parseMoneyToCents(
+          settingsForm.elements.fixedDeliveryFee.value,
+          { allowBlank: true }
+        );
+      }
+      await api.updateStoreSettings(input);
+      toast("Configuração de entrega salva.");
+      await loadDeliverySettings();
+    } catch (error) {
+      setError("deliverySettingsError", error.message);
+    } finally {
+      setBusy(submit, false);
+    }
+  });
+  await loadDeliverySettings();
 }
 
 function normalizeStore(payload) {
@@ -919,6 +961,10 @@ function normalizeStore(payload) {
     minimumOrderCents: Number(item.minimumOrderCents ?? item.minimum_order_cents ?? 0),
     isOpen: item.isOpen ?? item.is_open ?? false,
     acceptsDelivery: item.acceptsDelivery ?? item.accepts_delivery ?? false,
+    deliveryFeeMode: item.deliveryFeeMode === "fixed" || item.delivery_fee_mode === "fixed"
+      ? "fixed"
+      : "zones",
+    fixedDeliveryFeeCents: item.fixedDeliveryFeeCents ?? item.fixed_delivery_fee_cents ?? null,
     acceptsPickup: item.acceptsPickup ?? item.accepts_pickup ?? false,
     acceptsScheduledOrders: item.acceptsScheduledOrders ?? item.accepts_scheduled_orders ?? false,
     setupComplete: item.setupComplete ?? item.setup_complete ?? false,

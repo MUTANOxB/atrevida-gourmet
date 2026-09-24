@@ -43,7 +43,7 @@ export const createOrderSchema = z.object({
     neighborhood: z.string().trim().min(2).max(100),
     complement: z.string().trim().max(120).optional(),
     reference: z.string().trim().max(180).optional(),
-    zoneId: z.string().uuid()
+    zoneId: z.string().uuid().optional()
   }).strict().optional(),
   scheduledFor: z.string().datetime({ offset: true }).optional(),
   paymentMethod: z.enum(["pix", "cash", "card_on_delivery"]),
@@ -64,7 +64,7 @@ export const createOrderSchema = z.object({
     context.addIssue({
       code: "custom",
       path: ["delivery"],
-      message: "Endereço e zona de entrega são obrigatórios."
+      message: "Endereço de entrega é obrigatório."
     });
   }
 

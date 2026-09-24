@@ -39,6 +39,13 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function countResponse(count: number) {
+  return new Response(null, {
+    status: 200,
+    headers: { "content-range": count > 0 ? `0-${count - 1}/${count}` : "*/0" }
+  });
+}
+
 test("política de cache distingue assets mutáveis de imagens", () => {
   for (const filePath of ["/site/index.html", "/assets/js/app.js", "/assets/css/styles.css"]) {
     const policy = staticAssetCacheControl(filePath);
@@ -340,6 +347,8 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
           accepts_delivery: true,
           accepts_pickup: true,
           accepts_scheduled_orders: acceptsScheduledOrders,
+          delivery_fee_mode: "zones",
+          fixed_delivery_fee_cents: null,
           minimum_order_cents: 0,
           currency: "BRL",
           timezone: "America/Sao_Paulo",
@@ -388,6 +397,8 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
           accepts_delivery: true,
           accepts_pickup: true,
           accepts_scheduled_orders: acceptsScheduledOrders,
+          delivery_fee_mode: "zones",
+          fixed_delivery_fee_cents: null,
           minimum_order_cents: 0,
           timezone: "America/Sao_Paulo",
           scheduled_min_lead_minutes: 0,
@@ -397,7 +408,14 @@ test("fluxo publico liga catalogo, cotacao, checkout e tracking", async (context
           pix_merchant_city: "Marilia"
         });
       }
-      return jsonResponse({ id: storeId, setup_complete: true, accepts_delivery: true });
+      return jsonResponse({
+        id: storeId,
+        setup_complete: true,
+        accepts_delivery: true,
+        delivery_fee_mode: "zones",
+        fixed_delivery_fee_cents: null,
+        minimum_order_cents: 0
+      });
     }
 
     if (table === "delivery_zones") {
@@ -742,6 +760,8 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     minimum_order_cents: 1000,
     active: true
   };
+  let activeZoneCount = 1;
+  let zoneValidationQueries = 0;
   let store = {
     id: storeId,
     slug: "atrevida-gourmet",
@@ -753,6 +773,8 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     accepts_delivery: true,
     accepts_pickup: true,
     accepts_scheduled_orders: false,
+    delivery_fee_mode: "zones",
+    fixed_delivery_fee_cents: null,
     minimum_order_cents: 0,
     timezone: "America/Sao_Paulo",
     instagram_handle: "@atrevida_gourmet",
@@ -992,6 +1014,10 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
       }
     }
     if (table === "delivery_zones") {
+      if (method === "HEAD") {
+        zoneValidationQueries += 1;
+        return countResponse(activeZoneCount);
+      }
       if (method === "GET") return jsonResponse([zone]);
       if (method === "POST") {
         zone = { ...zone, ...input, id: zoneId };
@@ -1014,6 +1040,8 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
           accepts_delivery: store.accepts_delivery,
           accepts_pickup: store.accepts_pickup,
           accepts_scheduled_orders: store.accepts_scheduled_orders,
+          delivery_fee_mode: store.delivery_fee_mode,
+          fixed_delivery_fee_cents: store.fixed_delivery_fee_cents,
           pix_key: store.pix_key,
           pix_merchant_name: store.pix_merchant_name,
           pix_merchant_city: store.pix_merchant_city
@@ -1247,6 +1275,54 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
   assert.equal(settings.statusCode, 200, settings.body);
   assert.equal(settings.json().name, "Atrevida Gourmet Atualizada");
 
+  const invalidFixed = await app.inject({
+    method: "PATCH", url: "/api/admin/store", headers: managerHeaders,
+    payload: { deliveryFeeMode: "fixed", fixedDeliveryFeeCents: null }
+  });
+  assert.equal(invalidFixed.statusCode, 422, invalidFixed.body);
+  assert.equal(invalidFixed.json().error, "Configure a taxa de entrega antes de ativar as entregas.");
+
+  const fixedZero = await app.inject({
+    method: "PATCH", url: "/api/admin/store", headers: managerHeaders,
+    payload: { deliveryFeeMode: "fixed", fixedDeliveryFeeCents: 0 }
+  });
+  assert.equal(fixedZero.statusCode, 200, fixedZero.body);
+  assert.equal(fixedZero.json().deliveryFeeMode, "fixed");
+  assert.equal(fixedZero.json().fixedDeliveryFeeCents, 0);
+
+  activeZoneCount = 0;
+  const fixedToZonesWithoutZone = await app.inject({
+    method: "PATCH", url: "/api/admin/store", headers: managerHeaders,
+    payload: { deliveryFeeMode: "zones" }
+  });
+  assert.equal(fixedToZonesWithoutZone.statusCode, 422, fixedToZonesWithoutZone.body);
+  assert.equal(fixedToZonesWithoutZone.json().error, "Cadastre uma zona ativa antes de habilitar entrega.");
+
+  store.delivery_fee_mode = "zones";
+  const activeZonesModeWithoutZone = await app.inject({
+    method: "PATCH", url: "/api/admin/store", headers: managerHeaders,
+    payload: { name: "Atrevida ainda sem zona" }
+  });
+  assert.equal(activeZonesModeWithoutZone.statusCode, 422, activeZonesModeWithoutZone.body);
+  assert.equal(activeZonesModeWithoutZone.json().error, "Cadastre uma zona ativa antes de habilitar entrega.");
+
+  store.delivery_fee_mode = "fixed";
+  const queriesBeforeDisabledDelivery = zoneValidationQueries;
+  const disabledDeliveryZonesMode = await app.inject({
+    method: "PATCH", url: "/api/admin/store", headers: managerHeaders,
+    payload: { acceptsDelivery: false, deliveryFeeMode: "zones" }
+  });
+  assert.equal(disabledDeliveryZonesMode.statusCode, 200, disabledDeliveryZonesMode.body);
+  assert.equal(zoneValidationQueries, queriesBeforeDisabledDelivery);
+
+  activeZoneCount = 1;
+  const zonesWithActiveZone = await app.inject({
+    method: "PATCH", url: "/api/admin/store", headers: managerHeaders,
+    payload: { acceptsDelivery: true }
+  });
+  assert.equal(zonesWithActiveZone.statusCode, 200, zonesWithActiveZone.body);
+  assert.equal(zonesWithActiveZone.json().deliveryFeeMode, "zones");
+
   const managerStockMode = await app.inject({
     method: "PATCH",
     url: `/api/admin/inventory/${productId}`,
@@ -1269,6 +1345,12 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     payload: { stockMode: "manual" }
   });
   assert.equal(ownerStockMode.statusCode, 200, ownerStockMode.body);
+  const ownerDelivery = await app.inject({
+    method: "PATCH", url: "/api/admin/store",
+    headers: { authorization: "Bearer owner-access-token", "x-store-slug": "atrevida-gourmet" },
+    payload: { deliveryFeeMode: "zones" }
+  });
+  assert.equal(ownerDelivery.statusCode, 200, ownerDelivery.body);
 
   membershipRole = "staff";
   const staffHeaders = {
@@ -1284,6 +1366,12 @@ test("admin autentica, aplica RBAC e executa os CRUDs do marco", async (context)
     headers: { ...staffHeaders, origin }, payload: {}
   });
   assert.equal(forbiddenInitialData.statusCode, 403, forbiddenInitialData.body);
+  const forbiddenDeliverySettings = await app.inject({
+    method: "PATCH", url: "/api/admin/store",
+    headers: { ...staffHeaders, origin },
+    payload: { deliveryFeeMode: "fixed", fixedDeliveryFeeCents: 500 }
+  });
+  assert.equal(forbiddenDeliverySettings.statusCode, 403, forbiddenDeliverySettings.body);
   const staffOrders = await app.inject({
     method: "GET", url: "/api/admin/orders", headers: staffHeaders
   });

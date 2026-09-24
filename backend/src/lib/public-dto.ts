@@ -16,7 +16,13 @@ export function publicStoreDto(store: any) {
     description: store.description,
     logoUrl: store.logo_url,
     isOpen: store.is_open,
-    acceptsDelivery: store.accepts_delivery,
+    acceptsDelivery: store.accepts_delivery && (
+      store.delivery_fee_mode !== "fixed" || store.fixed_delivery_fee_cents != null
+    ),
+    deliveryFeeMode: store.delivery_fee_mode,
+    ...(store.delivery_fee_mode === "fixed"
+      ? { fixedDeliveryFeeCents: store.fixed_delivery_fee_cents }
+      : {}),
     acceptsPickup: store.accepts_pickup,
     acceptsScheduledOrders: store.accepts_scheduled_orders,
     minimumOrderCents: store.minimum_order_cents,

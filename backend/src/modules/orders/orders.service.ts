@@ -23,6 +23,8 @@ type StoreRow = {
   accepts_delivery: boolean;
   accepts_pickup: boolean;
   accepts_scheduled_orders: boolean;
+  delivery_fee_mode: "fixed" | "zones";
+  fixed_delivery_fee_cents: number | null;
   minimum_order_cents: number;
   timezone: string;
   scheduled_min_lead_minutes: number | null;
@@ -59,6 +61,49 @@ function normalizeZoneName(value: string) {
     .trim()
     .replace(/\s+/g, " ")
     .toLocaleLowerCase("pt-BR");
+}
+
+type DeliveryZoneRow = {
+  id: string;
+  name: string;
+  fee_cents: number;
+  minimum_order_cents: number;
+};
+
+export async function resolveDeliveryPricing(input: {
+  store: Pick<StoreRow, "delivery_fee_mode" | "fixed_delivery_fee_cents">;
+  delivery: NonNullable<CreateOrderInput["delivery"]>;
+  subtotalCents: number;
+  loadZone: (zoneId: string) => Promise<DeliveryZoneRow | null>;
+}) {
+  if (input.store.delivery_fee_mode === "fixed") {
+    if (input.store.fixed_delivery_fee_cents == null) {
+      throw new HttpError(422, "Entrega ainda não configurada.");
+    }
+    return {
+      deliveryZoneId: null,
+      deliveryFeeCents: input.store.fixed_delivery_fee_cents
+    };
+  }
+
+  if (!input.delivery.zoneId) {
+    throw new HttpError(422, "Selecione uma região de entrega.");
+  }
+  const zone = await input.loadZone(input.delivery.zoneId);
+  if (!zone) throw new HttpError(422, "Região de entrega inválida.");
+  if (normalizeZoneName(zone.name) !== normalizeZoneName(input.delivery.neighborhood)) {
+    throw new HttpError(422, "O bairro informado não corresponde à região selecionada.");
+  }
+  if (input.subtotalCents < zone.minimum_order_cents) {
+    throw new HttpError(422, "Pedido abaixo do valor mínimo para esta região.");
+  }
+  return { deliveryZoneId: zone.id, deliveryFeeCents: zone.fee_cents };
+}
+
+export function validateStoreMinimum(subtotalCents: number, minimumOrderCents: number) {
+  if (subtotalCents < minimumOrderCents) {
+    throw new HttpError(422, "Pedido abaixo do valor mínimo da loja.");
+  }
 }
 
 async function loadPricingProducts(storeId: string, productIds: string[]) {
@@ -191,7 +236,7 @@ function orderResponse(order: any, store?: StoreRow) {
 export async function createOrder(input: CreateOrderInput, idempotencyKey: string) {
   const { data: store, error: storeError } = await supabaseAdmin
     .from("stores")
-    .select("id, active, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, minimum_order_cents, timezone, scheduled_min_lead_minutes, scheduled_max_advance_days, pix_key, pix_merchant_name, pix_merchant_city")
+    .select("id, active, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, delivery_fee_mode, fixed_delivery_fee_cents, minimum_order_cents, timezone, scheduled_min_lead_minutes, scheduled_max_advance_days, pix_key, pix_merchant_name, pix_merchant_city")
     .eq("slug", input.storeSlug)
     .eq("active", true)
     .maybeSingle();
@@ -240,30 +285,28 @@ export async function createOrder(input: CreateOrderInput, idempotencyKey: strin
     let deliveryFeeCents = 0;
     let deliveryZoneId: string | null = null;
     if (input.fulfillmentType === "delivery") {
-      const { data: zone, error: zoneError } = await supabaseAdmin
-        .from("delivery_zones")
-        .select("id, name, fee_cents, minimum_order_cents")
-        .eq("id", input.delivery!.zoneId)
-        .eq("store_id", store.id)
-        .eq("active", true)
-        .maybeSingle();
-      if (zoneError || !zone) throw new HttpError(422, "Região de entrega inválida.");
-      if (
-        normalizeZoneName(zone.name) !==
-        normalizeZoneName(input.delivery!.neighborhood)
-      ) {
-        throw new HttpError(422, "O bairro informado não corresponde à região selecionada.");
-      }
-      if (subtotalCents < zone.minimum_order_cents) {
-        throw new HttpError(422, "Pedido abaixo do valor mínimo para esta região.");
-      }
-      deliveryZoneId = zone.id;
-      deliveryFeeCents = zone.fee_cents;
+      const delivery = input.delivery!;
+      const pricing = await resolveDeliveryPricing({
+        store: store as StoreRow,
+        delivery,
+        subtotalCents,
+        loadZone: async (zoneId) => {
+          const { data: zone, error: zoneError } = await supabaseAdmin
+            .from("delivery_zones")
+            .select("id, name, fee_cents, minimum_order_cents")
+            .eq("id", zoneId)
+            .eq("store_id", store.id)
+            .eq("active", true)
+            .maybeSingle();
+          if (zoneError) throw new HttpError(422, "Região de entrega inválida.");
+          return zone;
+        }
+      });
+      deliveryZoneId = pricing.deliveryZoneId;
+      deliveryFeeCents = pricing.deliveryFeeCents;
     }
 
-    if (subtotalCents < store.minimum_order_cents) {
-      throw new HttpError(422, "Pedido abaixo do valor mínimo da loja.");
-    }
+    validateStoreMinimum(subtotalCents, store.minimum_order_cents);
     const totalCents = subtotalCents + deliveryFeeCents;
     if (!Number.isSafeInteger(totalCents) || totalCents > 2_147_483_647) {
       throw new HttpError(422, "O valor calculado do pedido excede o limite permitido.");

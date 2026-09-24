@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const roots = [path.join(root, "assets", "js"), path.join(root, "admin")];
@@ -518,5 +518,93 @@ if (!/api\.updateDailyInventory\(product\.id, \{ quantityRemaining: remaining \}
 if (/preparedToday\s*=\s*product\.preparedToday\s*\+/.test(adminApp)) {
   fail("Frontend não pode calcular preparedToday usando saldo possivelmente obsoleto.");
 }
+
+const deliveryAdminHtml = fs.readFileSync(path.join(root, "admin", "entregas", "index.html"), "utf8");
+for (const contract of ["Modo da taxa", "Taxa fixa", "Por região/bairro", "fixedDeliveryFields", "zonesPanel"]) {
+  if (!deliveryAdminHtml.includes(contract)) fail(`Tela de entrega sem contrato fixed/zones: ${contract}`);
+}
+const deliveryInit = functionBlock(adminApp, "initDelivery", "normalizeStore");
+if (!/\$\(["']#zonesPanel["']\)\.hidden\s*=\s*fixed/.test(deliveryInit)) {
+  fail("Modo fixed deve esconder a lista de zonas.");
+}
+if (!/deliveryFeeMode\s*===\s*["']zones["'][\s\S]*?await loadZones\(\)/.test(deliveryInit)) {
+  fail("Modo zones deve manter o carregamento da lista de zonas.");
+}
+for (const contract of ["deliveryFeeMode", "fixedDeliveryFeeCents", "Entrega grátis", "Taxa de entrega:"]) {
+  if (!publicApp.includes(contract)) fail(`Checkout fixed incompleto: ${contract}`);
+}
+const quoteRequest = functionBlock(publicApp, "requestQuote", "renderCheckoutSummary");
+if (!/deliveryFeeMode\s*===\s*["']fixed["']\) return/.test(quoteRequest)) {
+  fail("Checkout fixed não deve executar cálculo por bairro.");
+}
+const payloadBlock = functionBlock(publicApp, "checkoutPayload", "resetCheckoutAttempt");
+if (!/deliveryFeeMode\s*===\s*["']zones["'][\s\S]*?zoneId/.test(payloadBlock)) {
+  fail("zoneId deve ser enviado somente no modo zones.");
+}
+if (!/uploadProductImage\(file\)[\s\S]*?timeout:\s*30_000/.test(apiClient)) {
+  fail("Upload de imagem deve manter timeout explícito de 30 segundos.");
+}
+
+const originalDocument = globalThis.document;
+const originalWindow = globalThis.window;
+const originalFetch = globalThis.fetch;
+const nativeSetTimeout = globalThis.setTimeout;
+const nativeClearTimeout = globalThis.clearTimeout;
+const timeoutDelays = [];
+globalThis.document = { documentElement: { dataset: { storeSlug: "atrevida-gourmet" } } };
+globalThis.window = {
+  setTimeout(callback, delay) {
+    timeoutDelays.push(delay);
+    return nativeSetTimeout(callback, delay);
+  },
+  clearTimeout: nativeClearTimeout
+};
+const apiModule = await import(`${pathToFileURL(path.join(root, "assets", "js", "api-client.js")).href}?frontend-test=${Date.now()}`);
+let fetchCalls = 0;
+globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), {
+  status: 200,
+  headers: { "content-type": "application/json" }
+});
+timeoutDelays.length = 0;
+await apiModule.apiFetch("/public/test");
+if (timeoutDelays[0] !== 28_000) fail("GET deve usar timeout padrão de 28 segundos.");
+
+timeoutDelays.length = 0;
+await apiModule.api.createOrder({}, "11111111-1111-4111-8111-111111111111");
+if (timeoutDelays[0] !== 14_000) fail("POST /orders deve manter timeout padrão de 14 segundos.");
+
+timeoutDelays.length = 0;
+await apiModule.apiFetch("/admin/test", { method: "PATCH", timeout: 1_234 });
+if (timeoutDelays[0] !== 1_234) fail("Timeout explícito deve prevalecer sobre o padrão do método.");
+
+globalThis.fetch = async () => {
+  fetchCalls += 1;
+  return fetchCalls === 1
+    ? new Response(JSON.stringify({ error: "temporário" }), { status: 503, headers: { "content-type": "application/json" } })
+    : new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+};
+await apiModule.apiFetch("/public/test", { timeout: 1_000 });
+if (fetchCalls !== 2) fail("GET transitório deve repetir exatamente uma vez.");
+
+for (const operation of [
+  () => apiModule.api.createOrder({}, "11111111-1111-4111-8111-111111111111"),
+  () => apiModule.api.createAdmin("delivery-zones", {}),
+  () => apiModule.api.updateStoreSettings({ deliveryFeeMode: "fixed" }),
+  () => apiModule.api.replaceAdmin("hours", {}),
+  () => apiModule.api.removeAdmin("delivery-zones", "11111111-1111-4111-8111-111111111111")
+]) {
+  fetchCalls = 0;
+  timeoutDelays.length = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify({ error: "temporário" }), { status: 503, headers: { "content-type": "application/json" } });
+  };
+  await operation().catch(() => {});
+  if (fetchCalls !== 1) fail("POST/PATCH/PUT/DELETE e POST /orders nunca podem repetir automaticamente.");
+  if (timeoutDelays[0] !== 14_000) fail("Métodos não GET devem manter timeout padrão de 14 segundos.");
+}
+globalThis.document = originalDocument;
+globalThis.window = originalWindow;
+globalThis.fetch = originalFetch;
 
 console.log(`${files.length} JavaScript(s) e ${htmlFiles.length} página(s) verificados.`);

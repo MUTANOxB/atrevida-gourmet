@@ -6,6 +6,8 @@
  */
 const API_BASE = "/api";
 const DEFAULT_TIMEOUT_MS = 14_000;
+const GET_TIMEOUT_MS = 28_000;
+const GET_RETRY_DELAY_MS = 350;
 const STORE_SLUG = document.documentElement.dataset.storeSlug || "atrevida-gourmet";
 
 export class ApiError extends Error {
@@ -30,7 +32,17 @@ function apiUrl(path) {
   return `${API_BASE}${path}`;
 }
 
-export async function apiFetch(path, options = {}) {
+function waitForRetry(signal) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, GET_RETRY_DELAY_MS);
+    signal?.addEventListener("abort", () => {
+      window.clearTimeout(timer);
+      reject(new ApiError("Solicitação cancelada.", { code: "ABORTED" }));
+    }, { once: true });
+  });
+}
+
+async function fetchOnce(path, options) {
   const {
     timeout = DEFAULT_TIMEOUT_MS,
     body,
@@ -39,9 +51,14 @@ export async function apiFetch(path, options = {}) {
     ...fetchOptions
   } = options;
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeout);
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeout);
   const abortFromCaller = () => controller.abort();
   signal?.addEventListener("abort", abortFromCaller, { once: true });
+  if (signal?.aborted) abortFromCaller();
 
   try {
     const isFormData = body instanceof FormData;
@@ -70,8 +87,12 @@ export async function apiFetch(path, options = {}) {
         ? "Sua sessão expirou. Entre novamente."
         : response.status === 403
           ? "Você não tem permissão para esta ação."
+          : response.status === 409
+            ? "Um item ou quantidade não está mais disponível. Atualize o cardápio e revise o carrinho."
           : response.status === 429
             ? "Muitas tentativas. Aguarde um pouco e tente novamente."
+            : [502, 503, 504].includes(response.status)
+              ? "O servidor está iniciando ou demorando para responder. Tente novamente em instantes."
             : "Não foi possível concluir a solicitação.";
       throw new ApiError(publicErrorMessage(payload, fallback), {
         status: response.status,
@@ -83,7 +104,10 @@ export async function apiFetch(path, options = {}) {
     return response.status === 204 ? null : payload;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (controller.signal.aborted) {
+    if (signal?.aborted) {
+      throw new ApiError("Solicitação cancelada.", { code: "ABORTED" });
+    }
+    if (timedOut) {
       throw new ApiError("A solicitação demorou demais. Verifique sua conexão e tente novamente.", {
         code: "TIMEOUT"
       });
@@ -95,6 +119,29 @@ export async function apiFetch(path, options = {}) {
     window.clearTimeout(timer);
     signal?.removeEventListener("abort", abortFromCaller);
   }
+}
+
+export async function apiFetch(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const requestOptions = {
+    ...options,
+    timeout: options.timeout ?? (method === "GET" ? GET_TIMEOUT_MS : DEFAULT_TIMEOUT_MS)
+  };
+  const attempts = method === "GET" ? 2 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fetchOnce(path, requestOptions);
+    } catch (error) {
+      const transient = error instanceof ApiError && (
+        error.code === "TIMEOUT" ||
+        error.code === "NETWORK_ERROR" ||
+        [502, 503, 504].includes(error.status)
+      );
+      if (!transient || attempt + 1 >= attempts || options.signal?.aborted) throw error;
+      await waitForRetry(options.signal);
+    }
+  }
+  throw new ApiError("Não foi possível concluir a solicitação.");
 }
 
 function jsonRequest(path, method, input, options = {}) {

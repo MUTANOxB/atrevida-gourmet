@@ -287,6 +287,10 @@ function normalizeCatalog(payload) {
     whatsappE164: source.whatsappE164 || source.whatsapp_e164 || "",
     isOpen: source.isOpen !== false,
     acceptsDelivery: source.acceptsDelivery === true,
+    deliveryFeeMode: source.deliveryFeeMode === "fixed" ? "fixed" : "zones",
+    fixedDeliveryFeeCents: source.fixedDeliveryFeeCents == null
+      ? null
+      : Number(source.fixedDeliveryFeeCents),
     acceptsPickup: source.acceptsPickup === true,
     acceptsScheduledOrders: source.acceptsScheduledOrders === true,
     minimumOrderCents: Number(source.minimumOrderCents ?? source.minimum_order_cents ?? 0),
@@ -650,8 +654,29 @@ function configureCheckout() {
 }
 
 function resetQuote() {
+  const fixed = state.catalog?.deliveryFeeMode === "fixed";
+  const fixedFee = state.catalog?.fixedDeliveryFeeCents;
+  if (fixed && fixedFee != null) {
+    state.quote = {
+      available: true,
+      mode: "fixed",
+      zoneId: null,
+      feeCents: fixedFee,
+      minimumOrderCents: state.catalog.minimumOrderCents
+    };
+    state.quoteFingerprint = "";
+    els.quoteBtn.hidden = true;
+    els.quoteStatus.textContent = fixedFee === 0
+      ? "Entrega grátis"
+      : `Taxa de entrega: ${money(fixedFee)}`;
+    els.quoteStatus.className = "is-success";
+    resetCheckoutAttempt();
+    renderCheckoutSummary();
+    return;
+  }
   state.quote = null;
   state.quoteFingerprint = "";
+  els.quoteBtn.hidden = false;
   els.quoteStatus.textContent = "Informe o bairro para consultar a área de entrega.";
   els.quoteStatus.className = "";
   resetCheckoutAttempt();
@@ -666,7 +691,8 @@ function setFulfillmentFields() {
   els.scheduledFields.hidden = !scheduled;
   ["street", "number", "neighborhood"].forEach((name) => { els.checkoutForm.elements[name].required = delivery; });
   els.checkoutForm.elements.scheduledFor.required = scheduled;
-  if (!delivery) resetQuote();
+  if (!delivery || state.catalog.deliveryFeeMode === "fixed") resetQuote();
+  else els.quoteBtn.hidden = false;
   els.checkoutDeliveryFee.textContent = delivery ? "A calcular" : money(0);
   renderCheckoutSummary();
 }
@@ -677,6 +703,7 @@ function quoteFingerprint() {
 }
 
 async function requestQuote() {
+  if (state.catalog?.deliveryFeeMode === "fixed") return;
   const form = new FormData(els.checkoutForm);
   const neighborhood = String(form.get("neighborhood") || "").trim();
   const postalCode = String(form.get("postalCode") || "").trim();
@@ -717,7 +744,11 @@ function renderCheckoutSummary() {
   const isDelivery = currentFulfillment() === "delivery";
   const feeCents = isDelivery && state.quote ? Number(state.quote.feeCents || 0) : 0;
   els.checkoutSubtotal.textContent = money(totals.subtotalCents);
-  els.checkoutDeliveryFee.textContent = isDelivery ? (state.quote ? money(feeCents) : "A calcular") : money(0);
+  els.checkoutDeliveryFee.textContent = isDelivery
+    ? (state.quote
+      ? (state.catalog?.deliveryFeeMode === "fixed" && feeCents === 0 ? "Entrega grátis" : money(feeCents))
+      : "A calcular")
+    : money(0);
   els.checkoutTotal.textContent = money(totals.subtotalCents + feeCents);
 }
 
@@ -787,7 +818,10 @@ function validateCheckout(form) {
   if (!state.cart.length || totals.invalid) throw new Error("Revise os itens do carrinho.");
   if (state.catalog.minimumOrderCents && totals.subtotalCents < state.catalog.minimumOrderCents) throw new Error(`O pedido mínimo da loja é ${money(state.catalog.minimumOrderCents)}.`);
   if (currentFulfillment() === "delivery") {
-    if (!state.quote || state.quoteFingerprint !== quoteFingerprint()) throw new Error("Calcule novamente a entrega para o bairro informado.");
+    if (!state.quote) throw new Error("A entrega ainda não foi configurada.");
+    if (state.catalog.deliveryFeeMode === "zones" && state.quoteFingerprint !== quoteFingerprint()) {
+      throw new Error("Calcule novamente a entrega para o bairro informado.");
+    }
     if (state.quote.minimumOrderCents && totals.subtotalCents < state.quote.minimumOrderCents) throw new Error(`O pedido mínimo para esta região é ${money(state.quote.minimumOrderCents)}.`);
   }
   const formData = new FormData(form);
@@ -823,9 +857,9 @@ function checkoutPayload() {
       number: String(form.get("number") || "").trim(),
       neighborhood: String(form.get("neighborhood") || "").trim(),
       complement: String(form.get("complement") || "").trim() || undefined,
-      reference: String(form.get("reference") || "").trim() || undefined,
-      zoneId: state.quote.zoneId
+      reference: String(form.get("reference") || "").trim() || undefined
     };
+    if (state.catalog.deliveryFeeMode === "zones") payload.delivery.zoneId = state.quote.zoneId;
   }
   if (fulfillmentType === "scheduled") {
     const scheduled = new Date(String(form.get("scheduledFor") || ""));
@@ -1101,7 +1135,12 @@ function wireEvents() {
   });
   els.checkoutForm.addEventListener("input", (event) => {
     resetCheckoutAttempt();
-    if (["neighborhood", "postalCode"].includes(event.target.name) && state.quoteFingerprint && state.quoteFingerprint !== quoteFingerprint()) resetQuote();
+    if (
+      state.catalog?.deliveryFeeMode === "zones" &&
+      ["neighborhood", "postalCode"].includes(event.target.name) &&
+      state.quoteFingerprint &&
+      state.quoteFingerprint !== quoteFingerprint()
+    ) resetQuote();
   });
   els.quoteBtn.addEventListener("click", requestQuote);
   els.checkoutForm.addEventListener("submit", submitCheckout);

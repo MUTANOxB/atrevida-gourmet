@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { publicOrderTrackingDto } from "./public-dto.js";
+import { publicOrderTrackingDto, publicStoreDto } from "./public-dto.js";
+
+test("DTO público expõe somente o modo e a taxa fixa necessária", () => {
+  const fixed = publicStoreDto({
+    slug: "atrevida-gourmet", name: "Atrevida", description: "", is_open: true,
+    accepts_delivery: true, accepts_pickup: true, accepts_scheduled_orders: false,
+    delivery_fee_mode: "fixed", fixed_delivery_fee_cents: 0,
+    minimum_order_cents: 0, currency: "BRL", secret_note: "não expor"
+  });
+  assert.equal(fixed.acceptsDelivery, true);
+  assert.equal(fixed.deliveryFeeMode, "fixed");
+  assert.equal(fixed.fixedDeliveryFeeCents, 0);
+  assert.equal(Object.hasOwn(fixed, "secret_note"), false);
+
+  const pending = publicStoreDto({
+    slug: "x", name: "X", accepts_delivery: true,
+    delivery_fee_mode: "fixed", fixed_delivery_fee_cents: null
+  });
+  assert.equal(pending.acceptsDelivery, false);
+
+  const zones = publicStoreDto({
+    slug: "x", name: "X", accepts_delivery: true,
+    delivery_fee_mode: "zones", fixed_delivery_fee_cents: 500
+  });
+  assert.equal(Object.hasOwn(zones, "fixedDeliveryFeeCents"), false);
+});
 
 test("tracking publico usa allowlist e nao retorna dados pessoais", () => {
   const dto = publicOrderTrackingDto({

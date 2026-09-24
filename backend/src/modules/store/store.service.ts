@@ -17,7 +17,7 @@ export async function quoteDelivery(input: {
 }) {
   const { data: store, error: storeError } = await supabaseAdmin
     .from("stores")
-    .select("id, setup_complete, accepts_delivery")
+    .select("id, delivery_fee_mode, fixed_delivery_fee_cents, minimum_order_cents, setup_complete, accepts_delivery")
     .eq("slug", input.storeSlug)
     .eq("active", true)
     .maybeSingle();
@@ -25,6 +25,19 @@ export async function quoteDelivery(input: {
   if (!store) throw new HttpError(404, "Loja não encontrada.");
   if (!store.setup_complete || !store.accepts_delivery) {
     return { available: false, reason: "Entrega ainda não configurada." };
+  }
+
+  if (store.delivery_fee_mode === "fixed") {
+    if (store.fixed_delivery_fee_cents == null) {
+      return { available: false, mode: "fixed", reason: "Entrega ainda não configurada." };
+    }
+    return {
+      available: true,
+      mode: "fixed",
+      zoneId: null,
+      feeCents: store.fixed_delivery_fee_cents,
+      minimumOrderCents: store.minimum_order_cents
+    };
   }
 
   const { data: zones, error } = await supabaseAdmin
@@ -42,6 +55,7 @@ export async function quoteDelivery(input: {
   }
   return {
     available: true,
+    mode: "zones",
     zoneId: zone.id,
     zoneName: zone.name,
     feeCents: zone.fee_cents,

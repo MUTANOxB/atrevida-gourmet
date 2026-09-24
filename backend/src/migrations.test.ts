@@ -91,6 +91,38 @@ function dailyInventoryMigration() {
   return readFileSync(new URL(`../supabase/migrations/${files[0]}`, import.meta.url), "utf8");
 }
 
+test("migration de estoque usa o timestamp registrado remotamente", () => {
+  const files = readdirSync(migrationsRoot)
+    .filter((name) => name.endsWith("_add_daily_product_inventory.sql"));
+  assert.deepEqual(files, ["20260922235038_add_daily_product_inventory.sql"]);
+});
+
+test("migration de modos de entrega é aditiva e mantém autoridade no banco", () => {
+  const files = readdirSync(migrationsRoot)
+    .filter((name) => name.endsWith("_add_delivery_fee_modes.sql"));
+  assert.equal(files.length, 1);
+  const migration = readFileSync(new URL(`../supabase/migrations/${files[0]}`, import.meta.url), "utf8");
+
+  assert.match(migration, /add column if not exists delivery_fee_mode text not null default 'zones'/i);
+  assert.match(migration, /delivery_fee_mode in \('fixed', 'zones'\)/i);
+  assert.match(migration, /add column if not exists fixed_delivery_fee_cents integer/i);
+  assert.match(migration, /fixed_delivery_fee_cents is null or fixed_delivery_fee_cents >= 0/i);
+  assert.match(migration, /where slug = 'atrevida-gourmet'/i);
+  assert.match(migration, /drop constraint if exists orders_delivery_zone_required/i);
+  assert.match(migration, /store_row\.delivery_fee_mode = 'fixed'[\s\S]*?delivery_zone_id_value := null[\s\S]*?delivery_fee := store_row\.fixed_delivery_fee_cents/i);
+  assert.match(migration, /store_row\.delivery_fee_mode = 'zones'[\s\S]*?subtotal < zone_row\.minimum_order_cents/i);
+  assert.match(migration, /where z\.id = delivery_zone_id_value[\s\S]*?z\.store_id = store_id_value[\s\S]*?z\.active/i);
+  assert.match(migration, /set search_path = pg_catalog, public/i);
+  assert.doesNotMatch(migration, /create\s+policy|grant\s+[^;]+\s+to\s+(?:anon|authenticated)/i);
+  assert.doesNotMatch(migration, /drop\s+constraint\s+(?:if\s+exists\s+)?orders_delivery_zone_same_store_fkey/i);
+
+  const priorMigrations = readdirSync(migrationsRoot)
+    .filter((name) => name !== files[0])
+    .map((name) => readFileSync(new URL(`../supabase/migrations/${name}`, import.meta.url), "utf8"))
+    .join("\n");
+  assert.match(priorMigrations, /constraint orders_delivery_zone_same_store_fkey[\s\S]*?references public\.delivery_zones\(id, store_id\)/i);
+});
+
 test("migration de estoque diário é transacional, multi-loja e usa limites seguros", () => {
   const migration = dailyInventoryMigration();
   assert.match(migration, /^\s*(?:--[^\n]*\n)*\s*begin\s*;/i);

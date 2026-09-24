@@ -616,7 +616,7 @@ export async function deactivateZone(actor: Actor, id: string) {
 
 export async function getStoreSettings(storeId: string) {
   const [storeResult, paymentsResult] = await Promise.all([
-    supabaseAdmin.from("stores").select("id, slug, name, description, logo_url, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, minimum_order_cents, timezone, instagram_handle, whatsapp_e164, whatsapp_display, scheduled_min_lead_minutes, scheduled_max_advance_days, pix_key, pix_merchant_name, pix_merchant_city").eq("id", storeId).single(),
+    supabaseAdmin.from("stores").select("id, slug, name, description, logo_url, setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, delivery_fee_mode, fixed_delivery_fee_cents, minimum_order_cents, timezone, instagram_handle, whatsapp_e164, whatsapp_display, scheduled_min_lead_minutes, scheduled_max_advance_days, pix_key, pix_merchant_name, pix_merchant_city").eq("id", storeId).single(),
     supabaseAdmin.from("store_payment_methods").select("method, label, instructions, active, sort_order").eq("store_id", storeId).order("sort_order")
   ]);
   if (storeResult.error || paymentsResult.error) databaseFailure("Falha ao carregar configurações.");
@@ -626,6 +626,8 @@ export async function getStoreSettings(storeId: string) {
     logoUrl: row.logo_url, setupComplete: row.setup_complete, isOpen: row.is_open,
     acceptsDelivery: row.accepts_delivery, acceptsPickup: row.accepts_pickup,
     acceptsScheduledOrders: row.accepts_scheduled_orders,
+    deliveryFeeMode: row.delivery_fee_mode,
+    fixedDeliveryFeeCents: row.fixed_delivery_fee_cents,
     minimumOrderCents: row.minimum_order_cents, timezone: row.timezone,
     instagram: row.instagram_handle, whatsappE164: row.whatsapp_e164,
     whatsappDisplay: row.whatsapp_display,
@@ -662,19 +664,33 @@ async function replacePaymentMethods(actor: Actor, methods: any[]) {
   }
 }
 
+async function validateDeliveryConfiguration(storeId: string, prospective: any) {
+  if (!prospective.accepts_delivery) return;
+  if (prospective.delivery_fee_mode === "fixed") {
+    if (prospective.fixed_delivery_fee_cents == null) {
+      throw new HttpError(422, "Configure a taxa de entrega antes de ativar as entregas.");
+    }
+    return;
+  }
+
+  const zones = await supabaseAdmin.from("delivery_zones")
+    .select("id", { count: "exact", head: true })
+    .eq("store_id", storeId).eq("active", true);
+  if (zones.error) databaseFailure("Falha ao validar a configuração de entrega.");
+  if (!zones.count) throw new HttpError(422, "Cadastre uma zona ativa antes de habilitar entrega.");
+}
+
 async function validateSetup(storeId: string, prospective: any) {
   if (!prospective.accepts_delivery && !prospective.accepts_pickup && !prospective.accepts_scheduled_orders) {
     throw new HttpError(422, "Ative ao menos uma modalidade de atendimento.");
   }
-  const [hours, payments, zones] = await Promise.all([
+  const [hours, payments] = await Promise.all([
     supabaseAdmin.from("store_hours").select("id", { count: "exact", head: true }).eq("store_id", storeId).eq("active", true),
-    supabaseAdmin.from("store_payment_methods").select("id", { count: "exact", head: true }).eq("store_id", storeId).eq("active", true),
-    supabaseAdmin.from("delivery_zones").select("id", { count: "exact", head: true }).eq("store_id", storeId).eq("active", true)
+    supabaseAdmin.from("store_payment_methods").select("id", { count: "exact", head: true }).eq("store_id", storeId).eq("active", true)
   ]);
-  if (hours.error || payments.error || zones.error) databaseFailure("Falha ao validar a configuração da loja.");
+  if (hours.error || payments.error) databaseFailure("Falha ao validar a configuração da loja.");
   if (!hours.count) throw new HttpError(422, "Cadastre ao menos um horário antes de concluir a configuração.");
   if (!payments.count) throw new HttpError(422, "Ative ao menos uma forma de pagamento.");
-  if (prospective.accepts_delivery && !zones.count) throw new HttpError(422, "Cadastre uma zona ativa antes de habilitar entrega.");
 }
 
 export async function updateStoreSettings(actor: Actor, input: any) {
@@ -684,7 +700,7 @@ export async function updateStoreSettings(actor: Actor, input: any) {
   }
   const [currentResult, pixMethodResult] = await Promise.all([
     supabaseAdmin.from("stores")
-      .select("setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, pix_key, pix_merchant_name, pix_merchant_city")
+      .select("setup_complete, is_open, accepts_delivery, accepts_pickup, accepts_scheduled_orders, delivery_fee_mode, fixed_delivery_fee_cents, pix_key, pix_merchant_name, pix_merchant_city")
       .eq("id", actor.storeId).single(),
     supabaseAdmin.from("store_payment_methods")
       .select("active").eq("store_id", actor.storeId).eq("method", "pix").maybeSingle()
@@ -706,18 +722,24 @@ export async function updateStoreSettings(actor: Actor, input: any) {
   })) {
     throw new HttpError(422, "Preencha a chave Pix, o nome e a cidade do recebedor antes de ativar o Pix.");
   }
-  if (input.paymentMethods) await replacePaymentMethods(actor, input.paymentMethods);
   const prospective = {
     accepts_delivery: input.acceptsDelivery ?? current.accepts_delivery,
     accepts_pickup: input.acceptsPickup ?? current.accepts_pickup,
-    accepts_scheduled_orders: input.acceptsScheduledOrders ?? current.accepts_scheduled_orders
+    accepts_scheduled_orders: input.acceptsScheduledOrders ?? current.accepts_scheduled_orders,
+    delivery_fee_mode: input.deliveryFeeMode ?? current.delivery_fee_mode,
+    fixed_delivery_fee_cents: input.fixedDeliveryFeeCents !== undefined
+      ? input.fixedDeliveryFeeCents
+      : current.fixed_delivery_fee_cents
   };
+  await validateDeliveryConfiguration(actor.storeId, prospective);
+  if (input.paymentMethods) await replacePaymentMethods(actor, input.paymentMethods);
   if (input.setupComplete === true) await validateSetup(actor.storeId, prospective);
 
   const mapping: Record<string, string> = {
     name: "name", description: "description", logoUrl: "logo_url", isOpen: "is_open",
     acceptsDelivery: "accepts_delivery", acceptsPickup: "accepts_pickup",
     acceptsScheduledOrders: "accepts_scheduled_orders", minimumOrderCents: "minimum_order_cents",
+    deliveryFeeMode: "delivery_fee_mode", fixedDeliveryFeeCents: "fixed_delivery_fee_cents",
     timezone: "timezone", instagram: "instagram_handle", whatsappE164: "whatsapp_e164",
     whatsappDisplay: "whatsapp_display", setupComplete: "setup_complete",
     scheduledMinLeadMinutes: "scheduled_min_lead_minutes",

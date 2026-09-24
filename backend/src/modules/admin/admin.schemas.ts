@@ -138,6 +138,8 @@ export const updateStoreBody = z.object({
   acceptsDelivery: z.boolean().optional(),
   acceptsPickup: z.boolean().optional(),
   acceptsScheduledOrders: z.boolean().optional(),
+  deliveryFeeMode: z.enum(["fixed", "zones"]).optional(),
+  fixedDeliveryFeeCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
   minimumOrderCents: z.number().int().min(0).max(100_000_000).optional(),
   timezone: z.string().trim().min(1).max(80).optional(),
   instagram: z.string().trim().max(100).nullable().optional(),
