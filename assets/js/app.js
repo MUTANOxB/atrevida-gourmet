@@ -3,6 +3,7 @@ import { loadCart, saveCart, loadTrackedOrders, saveTrackedOrders } from "./brow
 import { reconcileCartItems } from "./cart-reconciliation.js";
 
 const STORE_SLUG = document.documentElement.dataset.storeSlug || "atrevida-gourmet";
+const SIMPLE_MENU = document.documentElement.classList.contains("simple-menu");
 const MAX_LINES = 40;
 const MAX_LINE_QUANTITY = 50;
 const MAX_TOTAL_UNITS = 200;
@@ -34,6 +35,7 @@ const state = {
   catalog: null,
   products: new Map(),
   activeCategory: "all",
+  openCategories: new Set(),
   search: "",
   cart: loadCart(),
   selectedProduct: null,
@@ -306,6 +308,10 @@ function productList() {
 
 function renderCatalogSkeleton() {
   els.grid.setAttribute("aria-busy", "true");
+  if (SIMPLE_MENU) {
+    els.grid.innerHTML = Array.from({ length: 5 }, () => `<div class="simple-category skeleton" aria-hidden="true"></div>`).join("");
+    return;
+  }
   els.grid.innerHTML = Array.from({ length: 6 }, () => `<article class="product-card skeleton-card" aria-hidden="true"><div class="skeleton skeleton--image"></div><div class="product-card__body"><span class="skeleton skeleton--title"></span><span class="skeleton skeleton--text"></span><span class="skeleton skeleton--button"></span></div></article>`).join("");
 }
 
@@ -336,6 +342,17 @@ function applyStoreDetails() {
   if (els.footerStoreName) els.footerStoreName.textContent = catalog.name;
   if (els.footerStoreDescription) els.footerStoreDescription.textContent = catalog.description || "Cardápio digital";
   document.title = `${catalog.name} | Cardápio`;
+  if (SIMPLE_MENU) {
+    document.title = `${catalog.name} | Cardápio simples`;
+    $(".hero h1").textContent = catalog.name;
+    $(".hero__content > p").textContent = catalog.description || "Escolha seus favoritos e faça seu pedido.";
+    const status = $("#simpleStatus");
+    status.hidden = false;
+    status.textContent = catalog.isOpen ? "Aberto agora" : "Fechado no momento";
+    status.classList.toggle("simple-status--closed", !catalog.isOpen);
+    $("#catalogTitle").textContent = "Cardápio";
+    $("#searchInput").placeholder = "Buscar no cardápio";
+  }
   const logoUrl = safeImageUrl(catalog.logoUrl);
   if (logoUrl) els.storeLogo.src = logoUrl;
   const instagram = instagramProfile(catalog.instagram);
@@ -384,6 +401,7 @@ function reconcileCart() {
 }
 
 function renderTabs() {
+  if (SIMPLE_MENU) return;
   const categories = state.catalog?.categories || [];
   const featured = productList().some((product) => product.featured);
   const tabs = [{ id: "all", name: "Todos" }, ...(featured ? [{ id: "featured", name: "Destaques" }] : []), ...categories.map((category) => ({ id: category.id, name: category.name }))];
@@ -436,20 +454,35 @@ function renderProducts() {
   const products = filteredProducts();
   els.feedback.innerHTML = "";
   els.grid.setAttribute("aria-busy", "false");
-  els.grid.innerHTML = products.map((product) => {
-    const hasPrice = Number.isInteger(product.priceCents);
-    const available = productIsAvailable(product);
-    const purchasable = hasPrice && available;
-    const stockNotice = product.stockMode === "quantity" && product.lowStock && available
-      ? `<strong class="product-card__stock">Últimas ${product.remainingQuantity} unidades</strong>`
-      : "";
-    const buttonLabel = !hasPrice ? "Sem preço" : !available ? "Esgotado" : "Escolher +";
-    return `<article class="product-card ${purchasable ? "" : "is-unavailable"} ${available ? "" : "is-sold-out"}">
-      <button class="product-card__image" type="button" data-open-product="${escapeHtml(product.id)}" aria-label="${available ? "Ver" : "Produto esgotado:"} ${escapeHtml(product.name)}" ${purchasable ? "" : "disabled aria-disabled=\"true\""}>${product.featured && available ? `<span class="product-card__badge">Destaque</span>` : ""}${!available ? `<span class="product-card__badge product-card__badge--sold-out">ESGOTADO HOJE</span>` : ""}${productVisual(product, "product-card__photo")}</button>
-      <div class="product-card__body"><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p>${stockNotice}<div class="product-card__footer"><div class="product-card__price"><strong>${hasPrice ? money(product.priceCents) : "Indisponível"}</strong><small>${hasPrice ? "adicionais à parte" : "preço ainda não cadastrado"}</small></div><button class="product-card__add" type="button" data-open-product="${escapeHtml(product.id)}" ${purchasable ? "" : "disabled aria-disabled=\"true\""}>${buttonLabel}</button></div></div>
-    </article>`;
-  }).join("");
+  if (SIMPLE_MENU) {
+    const term = normalizeText(state.search.trim());
+    const categories = (state.catalog?.categories || []).map((category) => ({
+      ...category,
+      matches: category.products.filter((product) => products.includes(product))
+    })).filter((category) => category.matches.length);
+    els.grid.innerHTML = categories.map((category) => `<details class="simple-category" data-simple-category="${escapeHtml(category.id)}" ${term || state.openCategories.has(category.id) ? "open" : ""}>
+      <summary><span>${escapeHtml(category.name)}</span><small>${category.matches.length} ${category.matches.length === 1 ? "item" : "itens"}</small><span class="simple-category__chevron" aria-hidden="true">⌄</span></summary>
+      <div class="simple-category__products">${category.matches.map(productCard).join("")}</div>
+    </details>`).join("");
+    els.empty.hidden = categories.length !== 0;
+    return;
+  }
+  els.grid.innerHTML = products.map(productCard).join("");
   els.empty.hidden = products.length !== 0;
+}
+
+function productCard(product) {
+  const hasPrice = Number.isInteger(product.priceCents);
+  const available = productIsAvailable(product);
+  const purchasable = hasPrice && available;
+  const stockNotice = product.stockMode === "quantity" && product.lowStock && available
+    ? `<strong class="product-card__stock">Últimas ${product.remainingQuantity} unidades</strong>`
+    : SIMPLE_MENU && !available ? `<strong class="product-card__sold-out">ESGOTADO HOJE</strong>` : "";
+  const buttonLabel = !hasPrice ? "Sem preço" : !available ? "Esgotado" : "Escolher +";
+  return `<article class="product-card ${purchasable ? "" : "is-unavailable"} ${available ? "" : "is-sold-out"}">
+    <button class="product-card__image" type="button" data-open-product="${escapeHtml(product.id)}" aria-label="${available ? "Ver" : "Produto esgotado:"} ${escapeHtml(product.name)}" ${purchasable ? "" : "disabled aria-disabled=\"true\""}>${product.featured && available ? `<span class="product-card__badge">Destaque</span>` : ""}${!available ? `<span class="product-card__badge product-card__badge--sold-out">ESGOTADO HOJE</span>` : ""}${productVisual(product, "product-card__photo")}</button>
+    <div class="product-card__body"><h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(product.description)}</p>${stockNotice}<div class="product-card__footer"><div class="product-card__price"><strong>${hasPrice ? money(product.priceCents) : "Indisponível"}</strong><small>${hasPrice ? "adicionais à parte" : "preço ainda não cadastrado"}</small></div><button class="product-card__add" type="button" data-open-product="${escapeHtml(product.id)}" ${purchasable ? "" : "disabled aria-disabled=\"true\""}>${buttonLabel}</button></div></div>
+  </article>`;
 }
 
 function renderOptionGroups(product) {
@@ -1092,6 +1125,12 @@ function wireEvents() {
     const button = event.target.closest("[data-open-product]");
     if (button) openProduct(button.dataset.openProduct);
   });
+  if (SIMPLE_MENU) els.grid.addEventListener("toggle", (event) => {
+    const category = event.target.closest("[data-simple-category]");
+    if (!category || state.search.trim()) return;
+    if (category.open) state.openCategories.add(category.dataset.simpleCategory);
+    else state.openCategories.delete(category.dataset.simpleCategory);
+  }, true);
   els.search.addEventListener("input", (event) => { state.search = event.target.value; renderProducts(); });
   els.productClose.addEventListener("click", () => closeDialog(els.productModal));
   els.productForm.addEventListener("submit", addSelectedToCart);
@@ -1163,6 +1202,12 @@ function wireEvents() {
   els.showOrdersCategory.addEventListener("click", () => {
     const category = scheduledOrderCategory();
     if (category) {
+      if (SIMPLE_MENU) {
+        state.openCategories.add(category.id);
+        renderProducts();
+        $$("[data-simple-category]", els.grid).find((item) => item.dataset.simpleCategory === category.id)?.scrollIntoView({ behavior: "smooth" });
+        return;
+      }
       state.activeCategory = category.id;
       state.search = "";
       els.search.value = "";
